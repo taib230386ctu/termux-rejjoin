@@ -216,10 +216,10 @@ def restart_account(acc):
 
 
 # ==============================================================================
-# HÀM QUÉT FILE TÍN HIỆU (BYPASS CHẶN HTTP CHO CÁC APP CLONE)
+# HÀM QUÉT FILE TÍN HIỆU (FIX LỖI KẸT 0S AGO + HẠ NGƯỠNG XUỐNG 25S)
 # ==============================================================================
 def check_file_pings():
-    """Tự động quét các file ping_*.txt tạo ra bởi Executor"""
+    """Đọc trực tiếp os.time() ghi trong file txt để tránh cache system & cập nhật ngưỡng 25s"""
     search_paths = [
         "/sdcard/Delta/workspace/",
         "/sdcard/Android/data/",
@@ -238,14 +238,16 @@ def check_file_pings():
                     filename = os.path.basename(filepath)
                     username = filename.replace("ping_", "").replace(".txt", "").strip()
                     
-                    # Đọc thời gian ghi file gần nhất
-                    stat_cmd = f'su -c "stat -c %Y \\"{filepath}\\""'
-                    t_res = subprocess.run(stat_cmd, shell=True, stdout=subprocess.PIPE, text=True)
+                    # Đọc trực tiếp nội dung số os.time() bên trong file bằng cat
+                    cat_cmd = f'su -c "cat \\"{filepath}\\""'
+                    c_res = subprocess.run(cat_cmd, shell=True, stdout=subprocess.PIPE, text=True)
                     
-                    if t_res.returncode == 0 and t_res.stdout.strip().isdigit():
-                        mtime = int(t_res.stdout.strip())
-                        # Nếu file cập nhật trong vòng 35s qua
-                        if current_time - mtime < 35:
+                    if c_res.returncode == 0 and c_res.stdout.strip().isdigit():
+                        file_timestamp = int(c_res.stdout.strip())
+                        diff = current_time - file_timestamp
+                        
+                        # CHỈNH NGƯỠNG: File ghi trong 25 giây qua mới ghi nhận là ONLINE
+                        if 0 <= diff < 25:
                             with ping_lock:
                                 if username in last_ping:
                                     last_ping[username] = current_time
@@ -344,7 +346,7 @@ def set_username_menu():
 
         clear_screen()
         safe_print("==========================================")
-        safe_print("       ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
+        safe_print("        ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
         safe_print("==========================================")
 
         if not active_pkgs:
@@ -384,7 +386,7 @@ def config_server_menu():
 
         clear_screen()
         safe_print("==========================================")
-        safe_print("     CẤU HÌNH GAME & SERVER CLIENT        ")
+        safe_print("     CẤU HÌNH GAME & SERVER CLIENT         ")
         safe_print("==========================================")
 
         if not active_pkgs:
@@ -475,7 +477,7 @@ def run_manager():
 
     try:
         while True:
-            # Luôn kiểm tra song song cả tín hiệu File Ping từ Delta/Clone
+            # Kiểm tra file pings
             check_file_pings()
 
             current_time = time.time()
