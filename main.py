@@ -9,13 +9,14 @@ import time
 import urllib.parse
 
 # ==============================================================================
-# PHẦN 1: CẤU HÌNH HỆ THỐNG
+# PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA QUYỀN ROOT
 # ==============================================================================
 PORT = 9999
-MAX_NO_PING = 180  # Cho game 3 phút để nạp
-LAUNCH_INTERVAL = 15  # Delay giữa các app (giây)
+MAX_NO_PING = 180
+LAUNCH_INTERVAL = 15
 RESTART_DELAY = 3
 CONFIG_FILE = "accounts.json"
+COOKIE_FILE = "cookie.txt"
 
 DEFAULT_ACCOUNTS = [
     {
@@ -56,36 +57,76 @@ DEFAULT_ACCOUNTS = [
 ]
 
 
+def check_root_permission():
+    """1. Kiểm tra quyền ROOT ngay từ đầu (su -c id)"""
+    try:
+        res = subprocess.run(
+            ["su", "-c", "id"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5,
+        )
+        if res.returncode != 0 or "uid=0(root)" not in res.stdout:
+            print("[X] LỖI: Thiết bị chưa được ROOT hoặc chưa cấp quyền SuperUser (SU) cho Termux!")
+            print("[!] Vui lòng mở ứng dụng Magisk / KernelSU / APatch để cấp quyền ROOT.")
+            sys.exit(1)
+    except Exception as e:
+        print(f"[X] Không thể kiểm tra quyền ROOT: {e}")
+        sys.exit(1)
+
+
+def read_file_safely(filepath):
+    """2. Xử lý ngoại lệ khi đọc file & 3. Kiểm tra file rỗng"""
+    if not os.path.exists(filepath):
+        return None
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+            if not content.strip():
+                print(f"[!] CẢNH BÁO: File [{filepath}] đang bị TRỐNG!")
+                return ""
+            return content.strip()
+    except OSError as e:
+        print(f"[X] Lỗi hệ thống khi đọc file [{filepath}]: {e}")
+        return None
+
+
 def load_accounts():
     if not os.path.exists(CONFIG_FILE):
         save_accounts(DEFAULT_ACCOUNTS)
         return DEFAULT_ACCOUNTS
 
+    content = read_file_safely(CONFIG_FILE)
+    if not content:
+        return DEFAULT_ACCOUNTS
+
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for acc in data:
-                if "enabled" not in acc:
-                    acc["enabled"] = True
-                if "username" not in acc:
-                    acc["username"] = f"Player_{acc.get('package', 'Unknown')}"
-            return data
+        data = json.loads(content)
+        for acc in data:
+            if "enabled" not in acc:
+                acc["enabled"] = True
+            if "username" not in acc:
+                acc["username"] = f"Player_{acc.get('package', 'Unknown')}"
+        return data
     except Exception:
         return DEFAULT_ACCOUNTS
 
 
 def save_accounts(data):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+    except OSError as e:
+        print(f"[X] Lỗi khi lưu file cấu hình: {e}")
 
 
 ACCOUNTS = load_accounts()
 last_ping = {acc["username"]: 0 for acc in ACCOUNTS}
 has_pinged = {acc["username"]: False for acc in ACCOUNTS}
 
-# Khóa Lock để đảm bảo an toàn Threading khi cập nhật trạng thái
 ping_lock = threading.Lock()
-
 last_idle = 0
 last_total = 0
 
@@ -104,7 +145,7 @@ def clear_screen():
 
 
 def get_installed_roblox_packages():
-    """Hàm tự động quét danh sách Package Roblox/Noka/VNG đang cài trên máy"""
+    """Đọc động tất cả các Package clone Roblox trên máy thay vì hardcode"""
     try:
         res = subprocess.run(
             ["su", "-c", "pm list packages"],
@@ -118,7 +159,6 @@ def get_installed_roblox_packages():
             for line in lines:
                 if line.startswith("package:"):
                     p_name = line.replace("package:", "").strip()
-                    # Lọc các package liên quan Roblox hoặc App Clone
                     if any(
                         keyword in p_name.lower()
                         for keyword in ["roblox", "noka", "free."]
@@ -178,6 +218,26 @@ def get_ram_info():
 
 
 # ==============================================================================
+# HÀM TẠO THAO TÁC FILE TẠM AN TOÀN VỚI TRY/FINALLY
+# ==============================================================================
+def execute_temp_script(pkg, cmd_str):
+    """4. Dọn file tạm an toàn bằng try...finally"""
+    temp_file = f"/data/local/tmp/temp_script_{pkg}.sh"
+    try:
+        # Ghi script tạm bằng quyền root
+        write_cmd = f"echo '{cmd_str}' > {temp_file} && chmod 777 {temp_file}"
+        subprocess.run(["su", "-c", write_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Thực thi file tạm
+        subprocess.run(["su", "-c", f"sh {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        safe_print(f"[X] Lỗi thực thi file tạm cho {pkg}: {e}")
+    finally:
+        # Đảm bảo LUÔN LUÔN xóa file tạm cho dù có xảy ra ngoại lệ
+        subprocess.run(["su", "-c", f"rm -f {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ==============================================================================
 # BÓC TÁCH LINK & REJOIN
 # ==============================================================================
 def parse_vip_link(vip_link, place_id):
@@ -211,7 +271,7 @@ def parse_vip_link(vip_link, place_id):
 
 def restart_account(acc):
     username = acc["username"]
-    pkg = acc["package"]
+    pkg = acc["package"]  # Đọc linh hoạt Package từ cấu hình người dùng chọn
     place_id = acc.get("place_id", 1537690962)
     vip_link = acc.get("vip_link", "")
 
@@ -219,11 +279,7 @@ def restart_account(acc):
     safe_print(f"[{now_str}] Đang khởi chạy ({place_id}): {username} ({pkg})...")
 
     kill_cmd = f'ps -A | grep -w "{pkg}" | awk "{{print \\$2}}" | xargs kill -9'
-    subprocess.run(
-        ["su", "-c", kill_cmd],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    execute_temp_script(pkg, kill_cmd)
 
     time.sleep(RESTART_DELAY)
 
@@ -266,7 +322,7 @@ def restart_account(acc):
 
 
 # ==============================================================================
-# SERVER LẮNG NGHE PING (ThreadingTCPServer)
+# SERVER LẮNG NGHE PING
 # ==============================================================================
 class MultithreadedTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
@@ -305,95 +361,122 @@ class PingHandler(http.server.BaseHTTPRequestHandler):
 
 
 # ==============================================================================
-# MỤC QUÉT PACKAGE TRÊN MÁY
+# DANH SÁCH MENU DÀNH CHO NGUỜI DÙNG
 # ==============================================================================
+def toggle_clients_menu():
+    while True:
+        clear_screen()
+        safe_print("==========================================")
+        safe_print("      DANH SÁCH CLIENT & TRẠNG THÁI       ")
+        safe_print("==========================================")
+
+        for i, acc in enumerate(ACCOUNTS, 1):
+            status_str = "[ON] BẬT " if acc.get("enabled", True) else "[OFF] TẮT"
+            safe_print(
+                f" [{i}] Trạng thái: {status_str} | User: {acc['username']:<15} | App: {acc['package']}"
+            )
+
+        safe_print("------------------------------------------")
+        safe_print(" LỰA CHỌN THAO TÁC:")
+        safe_print(" [1-5] Nhập số thứ tự để Bật/Tắt Client tương ứng")
+        safe_print(" [88]  BẬT TẤT CẢ CLIENT")
+        safe_print(" [99]  TẮT TẤT CẢ CLIENT")
+        safe_print(" [0]   Quay lại Menu chính")
+        safe_print("==========================================")
+
+        choice = input("Nhập lựa chọn của bạn: ").strip().lower()
+
+        if choice == "0":
+            break
+
+        elif choice == "88":
+            for acc in ACCOUNTS:
+                acc["enabled"] = True
+            save_accounts(ACCOUNTS)
+            safe_print("[+] Đã BẬT tất cả các Client!")
+            time.sleep(1)
+
+        elif choice == "99":
+            for acc in ACCOUNTS:
+                acc["enabled"] = False
+            save_accounts(ACCOUNTS)
+            safe_print("[+] Đã TẮT tất cả các Client!")
+            time.sleep(1)
+
+        elif choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(ACCOUNTS):
+                target_acc = ACCOUNTS[idx]
+                target_acc["enabled"] = not target_acc.get("enabled", True)
+                save_accounts(ACCOUNTS)
+
+
 def scan_installed_packages_menu():
     clear_screen()
     safe_print("==========================================")
     safe_print("    ĐANG QUÉT PACKAGE TRÊN MÁY (ROOT)...  ")
     safe_print("==========================================")
 
-    pkgs = get_installed_roblox_packages()
+    installed_pkgs = get_installed_roblox_packages()
+    enabled_accounts = [acc for acc in ACCOUNTS if acc.get("enabled", True)]
 
-    if not pkgs:
-        safe_print("[!] Không tìm thấy Package Roblox/Noka nào trên máy!")
-        safe_print("[!] Đảm bảo điện thoại đã ROOT và đã cấp quyền SU.")
-        input("\nNhấn Enter để quay lại Menu...")
-        return
+    clear_screen()
+    safe_print("==========================================")
+    safe_print("    DANH SÁCH PACKAGE ĐANG BẬT (ON)       ")
+    safe_print("==========================================")
 
-    while True:
-        clear_screen()
-        safe_print("==========================================")
-        safe_print(" DANH SÁCH PACKAGE THỰC TẾ TRÊN ĐIỆN THOẠI")
-        safe_print("==========================================")
+    if not enabled_accounts:
+        safe_print("[!] Hiện tại KHÔNG CÓ Client nào đang BẬT (ON)!")
+        safe_print("[!] Hãy vào Mục [2] để BẬT Client trước.")
+    else:
+        count = 0
+        for acc in enabled_accounts:
+            count += 1
+            pkg = acc["package"]
+            user = acc["username"]
 
-        for i, pkg in enumerate(pkgs, 1):
-            assigned_user = ""
-            for acc in ACCOUNTS:
-                if acc["package"] == pkg:
-                    assigned_user = f"-> [Đang gán cho: {acc['username']}]"
-                    break
-            safe_print(f" [{i}] {pkg:<25} {assigned_user}")
+            installed_status = (
+                "(Đã cài trên máy)"
+                if pkg in installed_pkgs
+                else "(Chưa cài/Không tìm thấy)"
+            )
 
-        safe_print("------------------------------------------")
-        safe_print(" LỰA CHỌN THAO TÁC:")
-        safe_print(" [1-X] Chọn số tương ứng để gán Package vào Client")
-        safe_print(" [0] Quay lại Menu chính")
-        safe_print("==========================================")
+            safe_print(
+                f" [{count}] Package: {pkg:<15} | Player: {user:<15} {installed_status}"
+            )
 
-        choice = input("Nhập lựa chọn của bạn: ").strip()
-
-        if choice == "0":
-            break
-
-        if choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(pkgs):
-                selected_pkg = pkgs[idx]
-                safe_print(f"\nBạn đã chọn: [{selected_pkg}]")
-                client_num = input("Gán Package này cho Client số mấy (1-5): ").strip()
-                if client_num.isdigit():
-                    c_idx = int(client_num) - 1
-                    if 0 <= c_idx < len(ACCOUNTS):
-                        ACCOUNTS[c_idx]["package"] = selected_pkg
-                        save_accounts(ACCOUNTS)
-                        safe_print(
-                            f"[+] Đã gán thành công [{selected_pkg}] cho Client {c_idx+1} ({ACCOUNTS[c_idx]['username']})!"
-                        )
-                        time.sleep(1.5)
+    safe_print("------------------------------------------")
+    input("Nhấn Enter để quay lại Menu chính...")
 
 
-# ==============================================================================
-# HÀM XỬ LÝ NHẬP GAME / LINK CHO 1 CLIENT HOẶC ALL
-# ==============================================================================
 def apply_game_config(target_accounts, title="CLIENT"):
     while True:
         clear_screen()
-        safe_print(f"=== CAU HINH CHO: {title} ===")
+        safe_print(f"=== CẤU HÌNH CHO: {title} ===")
         safe_print("------------------------------------------")
-        safe_print("Chon che do nhap:")
-        safe_print(" [0] Back lai menu truoc do")
-        safe_print(" [1] Nhap PlaceID / Link Game / JobID thu cong")
+        safe_print("Chọn chế độ nhập:")
+        safe_print(" [0] Quay lại menu trước")
+        safe_print(" [1] Nhập PlaceID / Link Game / JobID thủ công")
         safe_print(" [2] Bee Swarm Simulator (PlaceID: 1537690962)")
         safe_print(" [3] King Legacy (PlaceID: 4520749081)")
         safe_print("==========================================")
 
-        mode = input("Lua chon cua ban (0-3): ").strip()
+        mode = input("Lựa chọn của bạn (0-3): ").strip()
 
         if mode == "0":
             break
 
         elif mode == "1":
-            inp = input("\nNhap PlaceID HOAC Link Server/JobID: ").strip()
+            inp = input("\nNhập PlaceID HOẶC Link Server/JobID: ").strip()
             if inp.isdigit():
                 p_id = int(inp)
                 for acc in target_accounts:
                     acc["place_id"] = p_id
-                safe_print(f"[+] Da cap nhat Place ID thanh [{p_id}] cho {title}!")
+                safe_print(f"[+] Đã cập nhật Place ID thành [{p_id}] cho {title}!")
             else:
                 for acc in target_accounts:
                     acc["vip_link"] = inp
-                safe_print(f"[+] Da cap nhat Link Server / JobID cho {title}!")
+                safe_print(f"[+] Đã cập nhật Link Server / JobID cho {title}!")
 
             save_accounts(ACCOUNTS)
             time.sleep(1.2)
@@ -403,7 +486,7 @@ def apply_game_config(target_accounts, title="CLIENT"):
             for acc in target_accounts:
                 acc["place_id"] = 1537690962
             save_accounts(ACCOUNTS)
-            safe_print(f"[+] Da doi Game thanh [Bee Swarm] cho {title}!")
+            safe_print(f"[+] Đã đổi Game thành [Bee Swarm] cho {title}!")
             time.sleep(1.2)
             break
 
@@ -411,14 +494,11 @@ def apply_game_config(target_accounts, title="CLIENT"):
             for acc in target_accounts:
                 acc["place_id"] = 4520749081
             save_accounts(ACCOUNTS)
-            safe_print(f"[+] Da doi Game thanh [King Legacy] cho {title}!")
+            safe_print(f"[+] Đã đổi Game thành [King Legacy] cho {title}!")
             time.sleep(1.2)
             break
 
 
-# ==============================================================================
-# MỤC 1: CÀI ĐẶT GAME VÀ SERVER CLIENT
-# ==============================================================================
 def config_server_menu():
     while True:
         clear_screen()
@@ -461,60 +541,6 @@ def config_server_menu():
                 apply_game_config([target_acc], title=f"CLIENT {target_acc['username']}")
 
 
-# ==============================================================================
-# MỤC 2: QUẢN LÝ BẬT / TẮT CLIENT
-# ==============================================================================
-def toggle_clients_menu():
-    while True:
-        clear_screen()
-        safe_print("==========================================")
-        safe_print("   QUẢN LÝ PACKAGE & BẬT / TẮT (ON/OFF)  ")
-        safe_print("==========================================")
-
-        for i, acc in enumerate(ACCOUNTS, 1):
-            status_str = "[ON]  BẬT" if acc.get("enabled", True) else "[OFF] TẮT"
-            safe_print(
-                f" [{i}] {status_str:<9} | Package: {acc['package']:<12} | User: {acc['username']}"
-            )
-
-        safe_print("------------------------------------------")
-        safe_print(" CHỨC NĂNG NÂNG CAO:")
-        safe_print(" [88] BẬT TẤT CẢ (ALL ON)")
-        safe_print(" [99] TẮT TẤT CẢ (ALL OFF)")
-        safe_print(" [1-5] Bật/Tắt từng Package tương ứng")
-        safe_print(" [0] Quay lại Menu chính")
-        safe_print("==========================================")
-
-        choice = input("Nhập lựa chọn của bạn: ").strip().lower()
-
-        if choice == "0":
-            break
-
-        elif choice == "88":
-            for acc in ACCOUNTS:
-                acc["enabled"] = True
-            save_accounts(ACCOUNTS)
-            safe_print("[+] Đã BẬT tất cả các Package!")
-            time.sleep(1)
-
-        elif choice == "99":
-            for acc in ACCOUNTS:
-                acc["enabled"] = False
-            save_accounts(ACCOUNTS)
-            safe_print("[+] Đã TẮT tất cả các Package!")
-            time.sleep(1)
-
-        elif choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(ACCOUNTS):
-                target_acc = ACCOUNTS[idx]
-                target_acc["enabled"] = not target_acc.get("enabled", True)
-                save_accounts(ACCOUNTS)
-
-
-# ==============================================================================
-# MỤC 3: QUẢN LÝ ĐỔI TÊN PLAYER
-# ==============================================================================
 def set_username_menu():
     while True:
         clear_screen()
@@ -561,17 +587,14 @@ def set_username_menu():
                     time.sleep(1.2)
 
 
-# ==============================================================================
-# MỤC 4: QUẢN LÝ VÒNG LẶP REJOIN (MONITOR)
-# ==============================================================================
 def run_manager():
     subprocess.run(["stty", "sane"], stderr=subprocess.DEVNULL)
 
     initial_active = [acc for acc in ACCOUNTS if acc.get("enabled", True)]
     if not initial_active:
-        safe_print("\n[!] Khong co Client nao dang BAT (ON)!")
-        safe_print("[!] Vui long vao Mục [2] de bat it nhat 1 Client.")
-        input("\nNhan Enter de quay lai Menu...")
+        safe_print("\n[!] Không có Client nào đang BẬT (ON)!")
+        safe_print("[!] Vui lòng vào Mục [2] để bật ít nhất 1 Client.")
+        input("\nNhấn Enter để quay lại Menu...")
         return
 
     server = MultithreadedTCPServer(("127.0.0.1", PORT), PingHandler)
@@ -581,10 +604,10 @@ def run_manager():
     server_thread.daemon = True
     server_thread.start()
 
-    safe_print("\n[+] Dang khoi chay danh sach app (Nhung Client [ON])...")
+    safe_print("\n[+] Đang khởi chạy danh sách app (Những Client [ON])...")
     for acc in initial_active:
         restart_account(acc)
-        safe_print(f" -> Doi {LAUNCH_INTERVAL}s truoc khi mo app tiep theo...")
+        safe_print(f" -> Đợi {LAUNCH_INTERVAL}s trước khi mở app tiếp theo...")
         time.sleep(LAUNCH_INTERVAL)
 
     get_cpu_percentage()
@@ -664,19 +687,22 @@ def run_manager():
 
 
 # ==============================================================================
-# MENU CHÍNH
+# MAIN ENTRY POINT
 # ==============================================================================
 if __name__ == "__main__":
+    # 1. Kiểm tra quyền ROOT ngay khi vừa chạy Script
+    check_root_permission()
+
     while True:
         clear_screen()
         safe_print("==========================================")
         safe_print("      TERMUX REJOIN AUTOMATION MENU       ")
         safe_print("==========================================")
         safe_print(" [1] Cài đặt Game & Link Server Client")
-        safe_print(" [2] Bật / Tắt Client (ON/OFF)")
+        safe_print(" [2] Liệt kê Client & Bật / Tắt (ON/OFF)")
         safe_print(" [3] Đổi Tên Player (Roblox Username)")
         safe_print(" [4] Bắt đầu chạy kịch bản Rejoin")
-        safe_print(" [5] Quét danh sách Package thực tế trên máy")
+        safe_print(" [5] Quản lý Package (Chỉ hiện các Package ON)")
         safe_print(" [0] Thoát")
         safe_print("==========================================")
 
