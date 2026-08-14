@@ -51,6 +51,58 @@ def clear_screen():
 
 
 # ==============================================================================
+# HÀM ĐO CPU VÀ RAM DÙNG FILE HỆ THỐNG (/proc)
+# ==============================================================================
+def get_system_stats():
+    """Lấy % CPU và % RAM sử dụng"""
+    global last_idle, last_total
+    cpu_usage = 0.0
+    ram_usage = 0.0
+
+    # Tính CPU
+    try:
+        with open("/proc/stat", "r") as f:
+            fields = [float(column) for column in f.readline().strip().split()[1:]]
+        idle_time = fields[3] + fields[4]
+        total_time = sum(fields)
+
+        if last_total != 0:
+            total_diff = total_time - last_total
+            idle_diff = idle_time - last_idle
+            if total_diff > 0:
+                cpu_usage = (1.0 - idle_diff / total_diff) * 100.0
+
+        last_idle = idle_time
+        last_total = total_time
+    except Exception:
+        pass
+
+    # Tính RAM
+    try:
+        with open("/proc/meminfo", "r") as f:
+            mem = {}
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    val = int(parts[1].split()[0])
+                    mem[key] = val
+
+            total_ram = mem.get("MemTotal", 1)
+            free_ram = mem.get("MemFree", 0)
+            buffers = mem.get("Buffers", 0)
+            cached = mem.get("Cached", 0)
+            avail_ram = mem.get("MemAvailable", free_ram + buffers + cached)
+
+            used_ram = total_ram - avail_ram
+            ram_usage = (used_ram / total_ram) * 100.0
+    except Exception:
+        pass
+
+    return cpu_usage, ram_usage
+
+
+# ==============================================================================
 # HÀM QUÉT PACKAGE TRÊN MÁY VÀ ĐỒNG BỘ DỮ LIỆU
 # ==============================================================================
 def get_installed_roblox_packages():
@@ -109,7 +161,6 @@ def sync_packages():
     global ACCOUNTS
     installed = get_installed_roblox_packages()
     
-    # Nếu chưa từng có file json, tự động tạo theo danh sách quét được
     acc_map = {acc["package"]: acc for acc in ACCOUNTS}
     updated_accounts = []
 
@@ -117,7 +168,6 @@ def sync_packages():
         if pkg in acc_map:
             updated_accounts.append(acc_map[pkg])
         else:
-            # Package mới phát hiện trên máy -> Tạo mặc định
             updated_accounts.append({
                 "package": pkg,
                 "username": f"Player_{pkg.split('.')[-1]}",
@@ -141,18 +191,6 @@ has_pinged = {acc["username"]: False for acc in ACCOUNTS}
 # ==============================================================================
 # BÓC TÁCH LINK & KHỞI CHẠY APP
 # ==============================================================================
-def execute_temp_script(pkg, cmd_str):
-    temp_file = f"/data/local/tmp/temp_script_{pkg}.sh"
-    try:
-        write_cmd = f"echo '{cmd_str}' > {temp_file} && chmod 777 {temp_file}"
-        subprocess.run(["su", "-c", write_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["su", "-c", f"sh {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-    finally:
-        subprocess.run(["su", "-c", f"rm -f {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
 def parse_vip_link(vip_link, place_id):
     if not vip_link or not vip_link.strip():
         return f"roblox://placeId={place_id}"
@@ -172,6 +210,21 @@ def parse_vip_link(vip_link, place_id):
     return f"roblox://placeId={place_id}"
 
 
+def get_main_activity(pkg):
+    """Tự động tìm Activity khởi chạy thực tế của Package bằng ROOT"""
+    try:
+        cmd = f'su -c "cmd package resolve-activity --brief {pkg}"'
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout:
+            lines = res.stdout.strip().splitlines()
+            for line in lines:
+                if "/" in line and not line.startswith("Priority"):
+                    return line.strip()
+    except Exception:
+        pass
+    return f"{pkg}/com.roblox.client.startup.ActivitySplash"
+
+
 def restart_account(acc):
     username = acc["username"]
     pkg = acc["package"]
@@ -179,20 +232,35 @@ def restart_account(acc):
     vip_link = acc.get("vip_link", "")
 
     now_str = time.strftime("%H:%M:%S")
-    safe_print(f"[{now_str}] Đang khởi chạy: {username} ({pkg})...")
+    safe_print(f"[{now_str}] 🚀 Đang khởi chạy: {username} ({pkg})...")
 
-    kill_cmd = f'ps -A | grep -w "{pkg}" | awk "{{print \\$2}}" | xargs kill -9'
-    execute_temp_script(pkg, kill_cmd)
+    # 1. Tắt App bằng ROOT
+    kill_cmd = f'su -c "am force-stop {pkg}"'
+    subprocess.run(kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     time.sleep(RESTART_DELAY)
     deep_link = parse_vip_link(vip_link, place_id)
 
-    res = subprocess.run(["am", "start", "-a", "android.intent.action.VIEW", "-d", deep_link, "-p", pkg],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 2. Mở bằng Deep Link qua ROOT
+    launch_cmd = f'su -c "am start -a android.intent.action.VIEW -d \\"{deep_link}\\" -p \\"{pkg}\\""'
+    res = subprocess.run(launch_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    if res.returncode != 0:
-        subprocess.run(["am", "start", "-n", f"{pkg}/com.roblox.client.startup.ActivitySplash", "-a", "android.intent.action.VIEW", "-d", deep_link],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 3. Dự phòng nếu Deep Link gặp lỗi
+    if res.returncode != 0 or "Error" in res.stderr or "unable to resolve" in res.stderr.lower():
+        safe_print(f"⚠️ Deep Link thất bại trên [{pkg}]. Đang thử mở trực tiếp via Activity...")
+        main_activity = get_main_activity(pkg)
+        
+        fallback_cmd = f'su -c "am start -n {main_activity} -a android.intent.action.VIEW -d \\"{deep_link}\\""'
+        res_fb = subprocess.run(fallback_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        if res_fb.returncode != 0:
+            safe_print(f"❌ LỖI KHỞI CHẠY KHÔNG THÀNH CÔNG [{pkg}]:")
+            safe_print(f"   [STDERR]: {res_fb.stderr.strip()}")
+            safe_print("-> Thử mở App mặc định...")
+            monkey_cmd = f'su -c "monkey -p {pkg} -c android.intent.category.LAUNCHER 1"'
+            subprocess.run(monkey_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        safe_print(f"✅ Đã gửi lệnh mở [{pkg}] thành công!")
 
     with ping_lock:
         last_ping[username] = time.time()
@@ -200,10 +268,49 @@ def restart_account(acc):
 
 
 # ==============================================================================
+# HÀM QUÉT FILE TÍN HIỆU
+# ==============================================================================
+def check_file_pings():
+    """Đọc trực tiếp os.time() ghi trong file txt để tránh cache system & cập nhật ngưỡng 25s"""
+    search_paths = [
+        "/sdcard/Delta/workspace/",
+        "/sdcard/Android/data/",
+        "/sdcard/"
+    ]
+    current_time = time.time()
+    
+    for path in search_paths:
+        cmd = f'su -c "find {path} -name \\"ping_*.txt\\" 2>/dev/null"'
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, text=True)
+        
+        if res.returncode == 0 and res.stdout:
+            files = res.stdout.strip().splitlines()
+            for filepath in files:
+                try:
+                    filename = os.path.basename(filepath)
+                    username = filename.replace("ping_", "").replace(".txt", "").strip()
+                    
+                    cat_cmd = f'su -c "cat \\"{filepath}\\""'
+                    c_res = subprocess.run(cat_cmd, shell=True, stdout=subprocess.PIPE, text=True)
+                    
+                    if c_res.returncode == 0 and c_res.stdout.strip().isdigit():
+                        file_timestamp = int(c_res.stdout.strip())
+                        diff = current_time - file_timestamp
+                        
+                        if 0 <= diff < 25:
+                            with ping_lock:
+                                if username in last_ping:
+                                    last_ping[username] = current_time
+                                    has_pinged[username] = True
+                except Exception:
+                    pass
+
+
+# ==============================================================================
 # MỤC 5: QUẢN LÝ PACKAGE TRÊN MÁY (BẬT/TẮT PACKAGE)
 # ==============================================================================
 def manage_packages_menu():
-    sync_packages() # Cập nhật danh sách mới nhất từ máy
+    sync_packages()
     
     while True:
         clear_screen()
@@ -243,11 +350,10 @@ def manage_packages_menu():
 
 
 # ==============================================================================
-# MỤC 2: QUẢN LÝ CLIENT (CHỈ HIỂN THỊ CÁC PACKAGE ĐÃ ON Ở MỤC 5)
+# MỤC 2: QUẢN LÝ CLIENT
 # ==============================================================================
 def manage_clients_menu():
     while True:
-        # Lọc danh sách: CHỈ lấy các Package đã BẬT [ON] ở Mục 5
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False)]
 
         clear_screen()
@@ -282,7 +388,7 @@ def manage_clients_menu():
 
 
 # ==============================================================================
-# MỤC 3: ĐỔI TÊN PLAYER (CHỈ HIỂN THỊ CÁC PACKAGE ĐÃ ON Ở MỤC 5)
+# MỤC 3: ĐỔI TÊN PLAYER
 # ==============================================================================
 def set_username_menu():
     while True:
@@ -290,7 +396,7 @@ def set_username_menu():
 
         clear_screen()
         safe_print("==========================================")
-        safe_print("       ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
+        safe_print("        ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
         safe_print("==========================================")
 
         if not active_pkgs:
@@ -322,7 +428,7 @@ def set_username_menu():
 
 
 # ==============================================================================
-# MỤC 1: CẤU HÌNH GAME (CHỈ HIỂN THỊ CÁC PACKAGE ĐÃ ON Ở MỤC 5)
+# MỤC 1: CẤU HÌNH GAME
 # ==============================================================================
 def config_server_menu():
     while True:
@@ -330,7 +436,7 @@ def config_server_menu():
 
         clear_screen()
         safe_print("==========================================")
-        safe_print("     CẤU HÌNH GAME & SERVER CLIENT        ")
+        safe_print("     CẤU HÌNH GAME & SERVER CLIENT         ")
         safe_print("==========================================")
 
         if not active_pkgs:
@@ -401,7 +507,6 @@ class PingHandler(http.server.BaseHTTPRequestHandler):
 
 
 def run_manager():
-    # Chỉ lấy các Client đã BẬT Package ở MỤC 5 VÀ BẬT Chạy ở MỤC 2
     runnable_accounts = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False) and acc.get("client_enabled", True)]
 
     if not runnable_accounts:
@@ -410,7 +515,8 @@ def run_manager():
         input("\nNhấn Enter để quay lại Menu...")
         return
 
-    server = MultithreadedTCPServer(("127.0.0.1", PORT), PingHandler)
+    # Khởi chạy HTTP Server
+    server = MultithreadedTCPServer(("0.0.0.0", PORT), PingHandler)
     server.timeout = 1.0
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -421,13 +527,20 @@ def run_manager():
 
     try:
         while True:
+            # Kiểm tra file pings
+            check_file_pings()
+
+            # Lấy thông số CPU/RAM
+            cpu_p, ram_p = get_system_stats()
+
             current_time = time.time()
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            safe_print("==========================================")
-            safe_print(f" TERMUX REJOIN MANAGER (Port {PORT}) | {now_str}")
-            safe_print("==========================================")
+            safe_print("==================================================")
+            safe_print(f" TERMUX REJOIN MANAGER | {now_str}")
+            safe_print(f" 📊 CPU: {cpu_p:.1f}% | RAM: {ram_p:.1f}%")
+            safe_print("==================================================")
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -437,14 +550,14 @@ def run_manager():
                     u_has_pinged = has_pinged.get(user, False)
 
                 diff = int(current_time - u_last_ping)
-                if u_has_pinged:
-                    status_str = f"ONLINE ({diff}s ago)" if diff <= MAX_NO_PING else f"TIMEOUT ({diff}s ago)"
+                if u_has_pinged and diff <= MAX_NO_PING:
+                    status_str = f"ONLINE ({diff}s ago)"
                 else:
-                    status_str = f"STARTING... ({diff}s/{MAX_NO_PING}s)"
+                    status_str = f"STARTING/TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
                 safe_print(f" {user:<15} | {pkg:<10} | {status_str}")
 
-            safe_print("------------------------------------------")
+            safe_print("--------------------------------------------------")
 
             for acc in runnable_accounts:
                 user = acc["username"]
