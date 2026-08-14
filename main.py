@@ -103,6 +103,33 @@ def clear_screen():
     sys.stdout.flush()
 
 
+def get_installed_roblox_packages():
+    """Hàm tự động quét danh sách Package Roblox/Noka/VNG đang cài trên máy"""
+    try:
+        res = subprocess.run(
+            ["su", "-c", "pm list packages"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode == 0:
+            lines = res.stdout.splitlines()
+            pkgs = []
+            for line in lines:
+                if line.startswith("package:"):
+                    p_name = line.replace("package:", "").strip()
+                    # Lọc các package liên quan Roblox hoặc App Clone
+                    if any(
+                        keyword in p_name.lower()
+                        for keyword in ["roblox", "noka", "free."]
+                    ):
+                        pkgs.append(p_name)
+            return sorted(pkgs)
+    except Exception:
+        pass
+    return []
+
+
 def get_cpu_percentage():
     global last_idle, last_total
     try:
@@ -278,6 +305,65 @@ class PingHandler(http.server.BaseHTTPRequestHandler):
 
 
 # ==============================================================================
+# MỤC QUÉT PACKAGE TRÊN MÁY
+# ==============================================================================
+def scan_installed_packages_menu():
+    clear_screen()
+    safe_print("==========================================")
+    safe_print("    ĐANG QUÉT PACKAGE TRÊN MÁY (ROOT)...  ")
+    safe_print("==========================================")
+
+    pkgs = get_installed_roblox_packages()
+
+    if not pkgs:
+        safe_print("[!] Không tìm thấy Package Roblox/Noka nào trên máy!")
+        safe_print("[!] Đảm bảo điện thoại đã ROOT và đã cấp quyền SU.")
+        input("\nNhấn Enter để quay lại Menu...")
+        return
+
+    while True:
+        clear_screen()
+        safe_print("==========================================")
+        safe_print(" DANH SÁCH PACKAGE THỰC TẾ TRÊN ĐIỆN THOẠI")
+        safe_print("==========================================")
+
+        for i, pkg in enumerate(pkgs, 1):
+            assigned_user = ""
+            for acc in ACCOUNTS:
+                if acc["package"] == pkg:
+                    assigned_user = f"-> [Đang gán cho: {acc['username']}]"
+                    break
+            safe_print(f" [{i}] {pkg:<25} {assigned_user}")
+
+        safe_print("------------------------------------------")
+        safe_print(" LỰA CHỌN THAO TÁC:")
+        safe_print(" [1-X] Chọn số tương ứng để gán Package vào Client")
+        safe_print(" [0] Quay lại Menu chính")
+        safe_print("==========================================")
+
+        choice = input("Nhập lựa chọn của bạn: ").strip()
+
+        if choice == "0":
+            break
+
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(pkgs):
+                selected_pkg = pkgs[idx]
+                safe_print(f"\nBạn đã chọn: [{selected_pkg}]")
+                client_num = input("Gán Package này cho Client số mấy (1-5): ").strip()
+                if client_num.isdigit():
+                    c_idx = int(client_num) - 1
+                    if 0 <= c_idx < len(ACCOUNTS):
+                        ACCOUNTS[c_idx]["package"] = selected_pkg
+                        save_accounts(ACCOUNTS)
+                        safe_print(
+                            f"[+] Đã gán thành công [{selected_pkg}] cho Client {c_idx+1} ({ACCOUNTS[c_idx]['username']})!"
+                        )
+                        time.sleep(1.5)
+
+
+# ==============================================================================
 # HÀM XỬ LÝ NHẬP GAME / LINK CHO 1 CLIENT HOẶC ALL
 # ==============================================================================
 def apply_game_config(target_accounts, title="CLIENT"):
@@ -331,7 +417,7 @@ def apply_game_config(target_accounts, title="CLIENT"):
 
 
 # ==============================================================================
-# MỤC 1: CÀI ĐẶT GAME VÀ SERVER CLIENT (ALL HOẶC SINGLE)
+# MỤC 1: CÀI ĐẶT GAME VÀ SERVER CLIENT
 # ==============================================================================
 def config_server_menu():
     while True:
@@ -376,7 +462,7 @@ def config_server_menu():
 
 
 # ==============================================================================
-# MỤC 2: QUẢN LÝ BẬT / TẮT CLIENT & DANH SÁCH PACKAGE
+# MỤC 2: QUẢN LÝ BẬT / TẮT CLIENT
 # ==============================================================================
 def toggle_clients_menu():
     while True:
@@ -396,7 +482,6 @@ def toggle_clients_menu():
         safe_print(" [88] BẬT TẤT CẢ (ALL ON)")
         safe_print(" [99] TẮT TẤT CẢ (ALL OFF)")
         safe_print(" [1-5] Bật/Tắt từng Package tương ứng")
-        safe_print(" [e] Chỉnh sửa Tên App Package (free.nokaX...)")
         safe_print(" [0] Quay lại Menu chính")
         safe_print("==========================================")
 
@@ -419,18 +504,6 @@ def toggle_clients_menu():
             safe_print("[+] Đã TẮT tất cả các Package!")
             time.sleep(1)
 
-        elif choice == "e":
-            pkg_num = input("Chọn số thứ tự Client muốn sửa Package (1-5): ").strip()
-            if pkg_num.isdigit():
-                idx = int(pkg_num) - 1
-                if 0 <= idx < len(ACCOUNTS):
-                    new_pkg = input(f"Nhập Tên Package mới cho Client {idx+1} (Hiện tại: {ACCOUNTS[idx]['package']}): ").strip()
-                    if new_pkg:
-                        ACCOUNTS[idx]["package"] = new_pkg
-                        save_accounts(ACCOUNTS)
-                        safe_print(f"[+] Đã cập nhật Package thành: [{new_pkg}]")
-                        time.sleep(1)
-
         elif choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(ACCOUNTS):
@@ -440,7 +513,7 @@ def toggle_clients_menu():
 
 
 # ==============================================================================
-# MỤC 3: QUẢN LÝ ĐỔI TÊN PLAYER / USERNAME ROBLOX
+# MỤC 3: QUẢN LÝ ĐỔI TÊN PLAYER
 # ==============================================================================
 def set_username_menu():
     while True:
@@ -474,7 +547,6 @@ def set_username_menu():
                 ).strip()
 
                 if new_name:
-                    # Cập nhật từ điển theo dõi Ping
                     with ping_lock:
                         if old_name in last_ping:
                             last_ping[new_name] = last_ping.pop(old_name)
@@ -601,13 +673,14 @@ if __name__ == "__main__":
         safe_print("      TERMUX REJOIN AUTOMATION MENU       ")
         safe_print("==========================================")
         safe_print(" [1] Cài đặt Game & Link Server Client")
-        safe_print(" [2] Liệt kê Package & Bật/Tắt (ON/OFF)")
+        safe_print(" [2] Bật / Tắt Client (ON/OFF)")
         safe_print(" [3] Đổi Tên Player (Roblox Username)")
         safe_print(" [4] Bắt đầu chạy kịch bản Rejoin")
+        safe_print(" [5] Quét danh sách Package thực tế trên máy")
         safe_print(" [0] Thoát")
         safe_print("==========================================")
 
-        choice = input("Nhập lựa chọn của bạn (0-4): ").strip()
+        choice = input("Nhập lựa chọn của bạn (0-5): ").strip()
 
         if choice == "1":
             config_server_menu()
@@ -619,6 +692,8 @@ if __name__ == "__main__":
             clear_screen()
             run_manager()
             break
+        elif choice == "5":
+            scan_installed_packages_menu()
         elif choice == "0":
             safe_print("Đã thoát chương trình.")
             sys.exit(0)
