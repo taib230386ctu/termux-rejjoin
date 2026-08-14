@@ -139,20 +139,8 @@ has_pinged = {acc["username"]: False for acc in ACCOUNTS}
 
 
 # ==============================================================================
-# BÓC TÁCH LINK & KHỞI CHẠY APP
+# BÓC TÁCH LINK & KHỞI CHẠY APP (ĐÃ CỦNG CỐ KHẢ NĂNG TƯƠNG THÍCH DELTA/CLONE)
 # ==============================================================================
-def execute_temp_script(pkg, cmd_str):
-    temp_file = f"/data/local/tmp/temp_script_{pkg}.sh"
-    try:
-        write_cmd = f"echo '{cmd_str}' > {temp_file} && chmod 777 {temp_file}"
-        subprocess.run(["su", "-c", write_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["su", "-c", f"sh {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-    finally:
-        subprocess.run(["su", "-c", f"rm -f {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
 def parse_vip_link(vip_link, place_id):
     if not vip_link or not vip_link.strip():
         return f"roblox://placeId={place_id}"
@@ -172,6 +160,21 @@ def parse_vip_link(vip_link, place_id):
     return f"roblox://placeId={place_id}"
 
 
+def get_main_activity(pkg):
+    """Tự động tìm Activity khởi chạy thực tế của Package bằng ROOT"""
+    try:
+        cmd = f'su -c "cmd package resolve-activity --brief {pkg}"'
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout:
+            lines = res.stdout.strip().splitlines()
+            for line in lines:
+                if "/" in line and not line.startswith("Priority"):
+                    return line.strip()
+    except Exception:
+        pass
+    return f"{pkg}/com.roblox.client.startup.ActivitySplash"
+
+
 def restart_account(acc):
     username = acc["username"]
     pkg = acc["package"]
@@ -179,20 +182,35 @@ def restart_account(acc):
     vip_link = acc.get("vip_link", "")
 
     now_str = time.strftime("%H:%M:%S")
-    safe_print(f"[{now_str}] Đang khởi chạy: {username} ({pkg})...")
+    safe_print(f"[{now_str}] 🚀 Đang khởi chạy: {username} ({pkg})...")
 
-    kill_cmd = f'ps -A | grep -w "{pkg}" | awk "{{print \\$2}}" | xargs kill -9'
-    execute_temp_script(pkg, kill_cmd)
+    # 1. Tắt App bằng ROOT
+    kill_cmd = f'su -c "am force-stop {pkg}"'
+    subprocess.run(kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     time.sleep(RESTART_DELAY)
     deep_link = parse_vip_link(vip_link, place_id)
 
-    res = subprocess.run(["am", "start", "-a", "android.intent.action.VIEW", "-d", deep_link, "-p", pkg],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 2. Mở bằng Deep Link qua ROOT
+    launch_cmd = f'su -c "am start -a android.intent.action.VIEW -d \\"{deep_link}\\" -p \\"{pkg}\\""'
+    res = subprocess.run(launch_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    if res.returncode != 0:
-        subprocess.run(["am", "start", "-n", f"{pkg}/com.roblox.client.startup.ActivitySplash", "-a", "android.intent.action.VIEW", "-d", deep_link],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 3. Dự phòng nếu Deep Link gặp lỗi
+    if res.returncode != 0 or "Error" in res.stderr or "unable to resolve" in res.stderr.lower():
+        safe_print(f"⚠️ Deep Link thất bại trên [{pkg}]. Đang thử mở trực tiếp via Activity...")
+        main_activity = get_main_activity(pkg)
+        
+        fallback_cmd = f'su -c "am start -n {main_activity} -a android.intent.action.VIEW -d \\"{deep_link}\\""'
+        res_fb = subprocess.run(fallback_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        if res_fb.returncode != 0:
+            safe_print(f"❌ LỖI KHỞI CHẠY KHÔNG THÀNH CÔNG [{pkg}]:")
+            safe_print(f"   [STDERR]: {res_fb.stderr.strip()}")
+            safe_print("-> Thử mở App mặc định...")
+            monkey_cmd = f'su -c "monkey -p {pkg} -c android.intent.category.LAUNCHER 1"'
+            subprocess.run(monkey_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        safe_print(f"✅ Đã gửi lệnh mở [{pkg}] thành công!")
 
     with ping_lock:
         last_ping[username] = time.time()
@@ -410,6 +428,7 @@ def run_manager():
         input("\nNhấn Enter để quay lại Menu...")
         return
 
+    # Mở Server lắng nghe trên tất cả các IP (0.0.0.0) để nhận Ping từ Delta Sandbox
     server = MultithreadedTCPServer(("0.0.0.0", PORT), PingHandler)
     server.timeout = 1.0
     threading.Thread(target=server.serve_forever, daemon=True).start()
