@@ -1,0 +1,45 @@
+-- SCRIPT LUAU GỬI PING (Dán vào Executor của mỗi Client)
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+
+local function isDisconnected()
+    -- Kiểm tra xem popup Disconnected/Error có xuất hiện không
+    local promptOverlay = CoreGui:FindFirstChild("RobloxPromptGui")
+    if promptOverlay and promptOverlay:FindFirstChild("promptOverlay") then
+        local errorPrompt = promptOverlay.promptOverlay:FindFirstChild("ErrorPrompt")
+        if errorPrompt and errorPrompt.Visible then
+            return true
+        end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        task.wait(5)
+        local player = Players.LocalPlayer
+        
+        -- CHỈ GỬI PING NẾU: Không bị Disconnected VÀ Player còn tồn tại trong game
+        if player and not isDisconnected() then
+            pcall(function()
+                local username = player.Name
+                -- Nếu gửi qua file txt
+                writefile("ping_" .. username .. ".txt", tostring(os.time()))
+                
+                -- Nếu gửi qua HTTP POST tới Termux (port 9999)
+                if request or syn or http_request then
+                    local req = request or syn.request or http_request
+                    req({
+                        Url = "http://127.0.0.1:9999",
+                        Method = "POST",
+                        Body = "PING_USER:" .. username
+                    })
+                end
+            end)
+        else
+            -- Nếu phát hiện Disconnected (Error 273/276), NGỪNG gửi ping ngay lập tức!
+            warn("[REJOIN] Phát hiện Disconnected! Dừng gửi Ping...")
+        end
+    end
+end)
