@@ -109,7 +109,6 @@ def sync_packages():
     global ACCOUNTS
     installed = get_installed_roblox_packages()
     
-    # Nếu chưa từng có file json, tự động tạo theo danh sách quét được
     acc_map = {acc["package"]: acc for acc in ACCOUNTS}
     updated_accounts = []
 
@@ -117,7 +116,6 @@ def sync_packages():
         if pkg in acc_map:
             updated_accounts.append(acc_map[pkg])
         else:
-            # Package mới phát hiện trên máy -> Tạo mặc định
             updated_accounts.append({
                 "package": pkg,
                 "username": f"Player_{pkg.split('.')[-1]}",
@@ -139,7 +137,7 @@ has_pinged = {acc["username"]: False for acc in ACCOUNTS}
 
 
 # ==============================================================================
-# BÓC TÁCH LINK & KHỞI CHẠY APP (ĐÃ CỦNG CỐ KHẢ NĂNG TƯƠNG THÍCH DELTA/CLONE)
+# BÓC TÁCH LINK & KHỞI CHẠY APP
 # ==============================================================================
 def parse_vip_link(vip_link, place_id):
     if not vip_link or not vip_link.strip():
@@ -218,10 +216,49 @@ def restart_account(acc):
 
 
 # ==============================================================================
+# HÀM QUÉT FILE TÍN HIỆU (BYPASS CHẶN HTTP CHO CÁC APP CLONE)
+# ==============================================================================
+def check_file_pings():
+    """Tự động quét các file ping_*.txt tạo ra bởi Executor"""
+    search_paths = [
+        "/sdcard/Delta/workspace/",
+        "/sdcard/Android/data/",
+        "/sdcard/"
+    ]
+    current_time = time.time()
+    
+    for path in search_paths:
+        cmd = f'su -c "find {path} -name \\"ping_*.txt\\" 2>/dev/null"'
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, text=True)
+        
+        if res.returncode == 0 and res.stdout:
+            files = res.stdout.strip().splitlines()
+            for filepath in files:
+                try:
+                    filename = os.path.basename(filepath)
+                    username = filename.replace("ping_", "").replace(".txt", "").strip()
+                    
+                    # Đọc thời gian ghi file gần nhất
+                    stat_cmd = f'su -c "stat -c %Y \\"{filepath}\\""'
+                    t_res = subprocess.run(stat_cmd, shell=True, stdout=subprocess.PIPE, text=True)
+                    
+                    if t_res.returncode == 0 and t_res.stdout.strip().isdigit():
+                        mtime = int(t_res.stdout.strip())
+                        # Nếu file cập nhật trong vòng 35s qua
+                        if current_time - mtime < 35:
+                            with ping_lock:
+                                if username in last_ping:
+                                    last_ping[username] = current_time
+                                    has_pinged[username] = True
+                except Exception:
+                    pass
+
+
+# ==============================================================================
 # MỤC 5: QUẢN LÝ PACKAGE TRÊN MÁY (BẬT/TẮT PACKAGE)
 # ==============================================================================
 def manage_packages_menu():
-    sync_packages() # Cập nhật danh sách mới nhất từ máy
+    sync_packages()
     
     while True:
         clear_screen()
@@ -261,11 +298,10 @@ def manage_packages_menu():
 
 
 # ==============================================================================
-# MỤC 2: QUẢN LÝ CLIENT (CHỈ HIỂN THỊ CÁC PACKAGE ĐÃ ON Ở MỤC 5)
+# MỤC 2: QUẢN LÝ CLIENT
 # ==============================================================================
 def manage_clients_menu():
     while True:
-        # Lọc danh sách: CHỈ lấy các Package đã BẬT [ON] ở Mục 5
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False)]
 
         clear_screen()
@@ -300,7 +336,7 @@ def manage_clients_menu():
 
 
 # ==============================================================================
-# MỤC 3: ĐỔI TÊN PLAYER (CHỈ HIỂN THỊ CÁC PACKAGE ĐÃ ON Ở MỤC 5)
+# MỤC 3: ĐỔI TÊN PLAYER
 # ==============================================================================
 def set_username_menu():
     while True:
@@ -340,7 +376,7 @@ def set_username_menu():
 
 
 # ==============================================================================
-# MỤC 1: CẤU HÌNH GAME (CHỈ HIỂN THỊ CÁC PACKAGE ĐÃ ON Ở MỤC 5)
+# MỤC 1: CẤU HÌNH GAME
 # ==============================================================================
 def config_server_menu():
     while True:
@@ -419,7 +455,6 @@ class PingHandler(http.server.BaseHTTPRequestHandler):
 
 
 def run_manager():
-    # Chỉ lấy các Client đã BẬT Package ở MỤC 5 VÀ BẬT Chạy ở MỤC 2
     runnable_accounts = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False) and acc.get("client_enabled", True)]
 
     if not runnable_accounts:
@@ -428,7 +463,7 @@ def run_manager():
         input("\nNhấn Enter để quay lại Menu...")
         return
 
-    # Mở Server lắng nghe trên tất cả các IP (0.0.0.0) để nhận Ping từ Delta Sandbox
+    # Khởi chạy HTTP Server lắng nghe phòng trường hợp app chạy được HTTP
     server = MultithreadedTCPServer(("0.0.0.0", PORT), PingHandler)
     server.timeout = 1.0
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -440,12 +475,15 @@ def run_manager():
 
     try:
         while True:
+            # Luôn kiểm tra song song cả tín hiệu File Ping từ Delta/Clone
+            check_file_pings()
+
             current_time = time.time()
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
             safe_print("==========================================")
-            safe_print(f" TERMUX REJOIN MANAGER (Port {PORT}) | {now_str}")
+            safe_print(f" TERMUX REJOIN MANAGER (HTTP + FILE) | {now_str}")
             safe_print("==========================================")
 
             for acc in runnable_accounts:
@@ -456,10 +494,10 @@ def run_manager():
                     u_has_pinged = has_pinged.get(user, False)
 
                 diff = int(current_time - u_last_ping)
-                if u_has_pinged:
-                    status_str = f"ONLINE ({diff}s ago)" if diff <= MAX_NO_PING else f"TIMEOUT ({diff}s ago)"
+                if u_has_pinged and diff <= MAX_NO_PING:
+                    status_str = f"ONLINE ({diff}s ago)"
                 else:
-                    status_str = f"STARTING... ({diff}s/{MAX_NO_PING}s)"
+                    status_str = f"STARTING/TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
                 safe_print(f" {user:<15} | {pkg:<10} | {status_str}")
 
