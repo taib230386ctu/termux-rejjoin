@@ -33,10 +33,7 @@ def check_root_permission():
             timeout=5,
         )
         if res.returncode != 0 or "uid=0(root)" not in res.stdout:
-            print(
-                "[X] LỖI: Thiết bị chưa được ROOT hoặc chưa cấp quyền SU cho"
-                " Termux!"
-            )
+            print("[X] LỖI: Thiết bị chưa được ROOT hoặc chưa cấp quyền SU cho Termux!")
             sys.exit(1)
     except Exception as e:
         print(f"[X] Không thể kiểm tra quyền ROOT: {e}")
@@ -111,7 +108,8 @@ def sync_packages():
     """Hàm tự động quét máy và đồng bộ với danh sách ACCOUNTS"""
     global ACCOUNTS
     installed = get_installed_roblox_packages()
-
+    
+    # Nếu chưa từng có file json, tự động tạo theo danh sách quét được
     acc_map = {acc["package"]: acc for acc in ACCOUNTS}
     updated_accounts = []
 
@@ -119,15 +117,16 @@ def sync_packages():
         if pkg in acc_map:
             updated_accounts.append(acc_map[pkg])
         else:
+            # Package mới phát hiện trên máy -> Tạo mặc định
             updated_accounts.append({
                 "package": pkg,
                 "username": f"Player_{pkg.split('.')[-1]}",
                 "place_id": 1537690962,
                 "vip_link": "",
                 "pkg_enabled": False,  # Mặc định tắt ở Mục 5
-                "client_enabled": True,  # Trạng thái chạy ở Mục 2
+                "client_enabled": True # Trạng thái chạy ở Mục 2
             })
-
+    
     ACCOUNTS = updated_accounts
     save_accounts(ACCOUNTS)
 
@@ -135,35 +134,23 @@ def sync_packages():
 # Tải & đồng bộ lúc khởi động
 sync_packages()
 
-last_ping = {}
-has_pinged = {}
+last_ping = {acc["username"]: 0 for acc in ACCOUNTS}
+has_pinged = {acc["username"]: False for acc in ACCOUNTS}
 
 
 # ==============================================================================
-# BÓC TÁCH LINK & KHỞI CHẠY APP (ĐÃ SỬA ÉP VÀO GAME)
+# BÓC TÁCH LINK & KHỞI CHẠY APP
 # ==============================================================================
 def execute_temp_script(pkg, cmd_str):
     temp_file = f"/data/local/tmp/temp_script_{pkg}.sh"
     try:
         write_cmd = f"echo '{cmd_str}' > {temp_file} && chmod 777 {temp_file}"
-        subprocess.run(
-            ["su", "-c", write_cmd],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        subprocess.run(
-            ["su", "-c", f"sh {temp_file}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        subprocess.run(["su", "-c", write_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["su", "-c", f"sh {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
     finally:
-        subprocess.run(
-            ["su", "-c", f"rm -f {temp_file}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        subprocess.run(["su", "-c", f"rm -f {temp_file}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def parse_vip_link(vip_link, place_id):
@@ -172,17 +159,11 @@ def parse_vip_link(vip_link, place_id):
 
     vip_link = vip_link.strip()
     if "privateServerLinkCode=" in vip_link:
-        code = urllib.parse.parse_qs(urllib.parse.urlparse(vip_link).query).get(
-            "privateServerLinkCode", [""]
-        )[0]
-        if code:
-            return f"roblox://placeId={place_id}&linkCode={code}"
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(vip_link).query).get("privateServerLinkCode", [""])[0]
+        if code: return f"roblox://placeId={place_id}&linkCode={code}"
     elif "/share" in vip_link and "code=" in vip_link:
-        code = urllib.parse.parse_qs(urllib.parse.urlparse(vip_link).query).get(
-            "code", [""]
-        )[0]
-        if code:
-            return f"roblox://placeId={place_id}&linkCode={code}"
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(vip_link).query).get("code", [""])[0]
+        if code: return f"roblox://placeId={place_id}&linkCode={code}"
     elif vip_link.startswith("roblox://"):
         return vip_link
     elif len(vip_link) == 36 and "-" in vip_link:
@@ -200,41 +181,18 @@ def restart_account(acc):
     now_str = time.strftime("%H:%M:%S")
     safe_print(f"[{now_str}] Đang khởi chạy: {username} ({pkg})...")
 
-    # 1. Tắt triệt để app đang chạy
     kill_cmd = f'ps -A | grep -w "{pkg}" | awk "{{print \\$2}}" | xargs kill -9'
     execute_temp_script(pkg, kill_cmd)
 
     time.sleep(RESTART_DELAY)
-
-    # 2. Tạo Deep Link chuẩn
     deep_link = parse_vip_link(vip_link, place_id)
 
-    # 3. Ép mở trực tiếp vào Game qua lệnh Android Shell (Hỗ trợ cả Freeform/Pop-up góc phải)
-    cmd1 = (
-        f"am start -W -a android.intent.action.VIEW "
-        f"-d '{deep_link}' "
-        f"-n {pkg}/com.roblox.client.startup.ActivitySplash "
-        f"--windowingMode 5 --task-bounds 600 100 1080 800"
-    )
+    res = subprocess.run(["am", "start", "-a", "android.intent.action.VIEW", "-d", deep_link, "-p", pkg],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    res = subprocess.run(
-        ["su", "-c", cmd1],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # Nếu ActivitySplash không khớp ở bản Clone, mở dạng Package View tổng quát
     if res.returncode != 0:
-        cmd2 = (
-            f"am start -W -a android.intent.action.VIEW "
-            f"-d '{deep_link}' -p {pkg} "
-            f"--windowingMode 5 --task-bounds 600 100 1080 800"
-        )
-        subprocess.run(
-            ["su", "-c", cmd2],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        subprocess.run(["am", "start", "-n", f"{pkg}/com.roblox.client.startup.ActivitySplash", "-a", "android.intent.action.VIEW", "-d", deep_link],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     with ping_lock:
         last_ping[username] = time.time()
@@ -245,8 +203,8 @@ def restart_account(acc):
 # MỤC 5: QUẢN LÝ PACKAGE TRÊN MÁY (BẬT/TẮT PACKAGE)
 # ==============================================================================
 def manage_packages_menu():
-    sync_packages()  # Cập nhật danh sách mới nhất từ máy
-
+    sync_packages() # Cập nhật danh sách mới nhất từ máy
+    
     while True:
         clear_screen()
         safe_print("==========================================")
@@ -257,9 +215,7 @@ def manage_packages_menu():
             safe_print("[!] Không tìm thấy Package Roblox/Noka nào trên máy!")
         else:
             for i, acc in enumerate(ACCOUNTS, 1):
-                status = (
-                    "[ON]  BẬT" if acc.get("pkg_enabled", False) else "[OFF] TẮT"
-                )
+                status = "[ON]  BẬT" if acc.get("pkg_enabled", False) else "[OFF] TẮT"
                 safe_print(f" [{i}] {status} | Package: {acc['package']}")
 
         safe_print("------------------------------------------")
@@ -274,19 +230,15 @@ def manage_packages_menu():
         if choice == "0":
             break
         elif choice == "88":
-            for acc in ACCOUNTS:
-                acc["pkg_enabled"] = True
+            for acc in ACCOUNTS: acc["pkg_enabled"] = True
             save_accounts(ACCOUNTS)
         elif choice == "99":
-            for acc in ACCOUNTS:
-                acc["pkg_enabled"] = False
+            for acc in ACCOUNTS: acc["pkg_enabled"] = False
             save_accounts(ACCOUNTS)
         elif choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(ACCOUNTS):
-                ACCOUNTS[idx]["pkg_enabled"] = not ACCOUNTS[idx].get(
-                    "pkg_enabled", False
-                )
+                ACCOUNTS[idx]["pkg_enabled"] = not ACCOUNTS[idx].get("pkg_enabled", False)
                 save_accounts(ACCOUNTS)
 
 
@@ -295,6 +247,7 @@ def manage_packages_menu():
 # ==============================================================================
 def manage_clients_menu():
     while True:
+        # Lọc danh sách: CHỈ lấy các Package đã BẬT [ON] ở Mục 5
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False)]
 
         clear_screen()
@@ -307,12 +260,9 @@ def manage_clients_menu():
             safe_print("[!] Vui lòng vào Mục [5] để chọn BẬT Package trước.")
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                status = (
-                    "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
-                )
+                status = "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
                 safe_print(
-                    f" [{i}] {status:<9} | Player: {acc['username']:<15} | App:"
-                    f" {acc['package']}"
+                    f" [{i}] {status:<9} | Player: {acc['username']:<15} | App: {acc['package']}"
                 )
 
         safe_print("------------------------------------------")
@@ -327,9 +277,7 @@ def manage_clients_menu():
         elif choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(active_pkgs):
-                active_pkgs[idx]["client_enabled"] = not active_pkgs[idx].get(
-                    "client_enabled", True
-                )
+                active_pkgs[idx]["client_enabled"] = not active_pkgs[idx].get("client_enabled", True)
                 save_accounts(ACCOUNTS)
 
 
@@ -349,9 +297,7 @@ def set_username_menu():
             safe_print("[!] Hãy BẬT Package ở Mục [5] trước khi đổi tên Player!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                safe_print(
-                    f" [{i}] User: {acc['username']:<15} | App: {acc['package']}"
-                )
+                safe_print(f" [{i}] User: {acc['username']:<15} | App: {acc['package']}")
 
         safe_print("------------------------------------------")
         safe_print(" [1-N] Chọn Client để đổi tên Player tương ứng")
@@ -367,10 +313,7 @@ def set_username_menu():
             if 0 <= idx < len(active_pkgs):
                 acc = active_pkgs[idx]
                 old_name = acc["username"]
-                new_name = input(
-                    f"\nNhập Username Roblox mới cho [{acc['package']}] (Cũ:"
-                    f" {old_name}): "
-                ).strip()
+                new_name = input(f"\nNhập Username Roblox mới cho [{acc['package']}] (Cũ: {old_name}): ").strip()
                 if new_name:
                     acc["username"] = new_name
                     save_accounts(ACCOUNTS)
@@ -394,15 +337,9 @@ def config_server_menu():
             safe_print("[!] Hãy BẬT Package ở Mục [5] trước khi cài đặt Game!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                link_display = (
-                    acc.get("vip_link", "").strip() or "[Public Server]"
-                )
-                if len(link_display) > 20:
-                    link_display = link_display[:17] + "..."
-                safe_print(
-                    f" [{i}] {acc['username']:<15} | PlaceID:"
-                    f" {acc.get('place_id', 1537690962)} | {link_display}"
-                )
+                link_display = acc.get("vip_link", "").strip() or "[Public Server]"
+                if len(link_display) > 20: link_display = link_display[:17] + "..."
+                safe_print(f" [{i}] {acc['username']:<15} | PlaceID: {acc.get('place_id', 1537690962)} | {link_display}")
 
         safe_print("------------------------------------------")
         safe_print(" [99]  Cài đặt cho TẤT CẢ Client đang mở")
@@ -417,10 +354,8 @@ def config_server_menu():
         elif choice == "99" and active_pkgs:
             inp = input("\nNhập PlaceID HOẶC Link Server VIP: ").strip()
             for acc in active_pkgs:
-                if inp.isdigit():
-                    acc["place_id"] = int(inp)
-                else:
-                    acc["vip_link"] = inp
+                if inp.isdigit(): acc["place_id"] = int(inp)
+                else: acc["vip_link"] = inp
             save_accounts(ACCOUNTS)
             safe_print("[+] Cập nhật thành công!")
             time.sleep(1)
@@ -428,14 +363,9 @@ def config_server_menu():
             idx = int(choice) - 1
             if 0 <= idx < len(active_pkgs):
                 target_acc = active_pkgs[idx]
-                inp = input(
-                    "\nNhập PlaceID HOẶC Link Server VIP cho"
-                    f" [{target_acc['username']}]: "
-                ).strip()
-                if inp.isdigit():
-                    target_acc["place_id"] = int(inp)
-                else:
-                    target_acc["vip_link"] = inp
+                inp = input(f"\nNhập PlaceID HOẶC Link Server VIP cho [{target_acc['username']}]: ").strip()
+                if inp.isdigit(): target_acc["place_id"] = int(inp)
+                else: target_acc["vip_link"] = inp
                 save_accounts(ACCOUNTS)
                 safe_print("[+] Cập nhật thành công!")
                 time.sleep(1)
@@ -448,20 +378,15 @@ class MultithreadedTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-
 class PingHandler(http.server.BaseHTTPRequestHandler):
-
     def setup(self):
         super().setup()
         self.request.settimeout(3.0)
-
     def do_POST(self):
         try:
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length > 0:
-                body = self.rfile.read(content_length).decode(
-                    "utf-8", errors="ignore"
-                )
+                body = self.rfile.read(content_length).decode("utf-8", errors="ignore")
                 if "PING_USER:" in body:
                     username = body.split("PING_USER:")[1].strip()
                     with ping_lock:
@@ -471,34 +396,19 @@ class PingHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
-        except Exception:
-            pass
-
-    def log_message(self, format, *args):
-        return
+        except Exception: pass
+    def log_message(self, format, *args): return
 
 
 def run_manager():
-    global last_ping, has_pinged
-    runnable_accounts = [
-        acc
-        for acc in ACCOUNTS
-        if acc.get("pkg_enabled", False) and acc.get("client_enabled", True)
-    ]
+    # Chỉ lấy các Client đã BẬT Package ở MỤC 5 VÀ BẬT Chạy ở MỤC 2
+    runnable_accounts = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False) and acc.get("client_enabled", True)]
 
     if not runnable_accounts:
         safe_print("\n[!] Không có Client nào đủ điều kiện chạy!")
-        safe_print(
-            "[!] Hãy chắc chắn bạn đã: BẬT Package ở Mục [5] VÀ BẬT Client ở"
-            " Mục [2]."
-        )
+        safe_print("[!] Hãy chắc chắn bạn đã: BẬT Package ở Mục [5] VÀ BẬT Client ở Mục [2].")
         input("\nNhấn Enter để quay lại Menu...")
         return
-
-    # Khởi tạo bộ đếm Ping chính xác cho danh sách chạy
-    for acc in runnable_accounts:
-        last_ping[acc["username"]] = time.time()
-        has_pinged[acc["username"]] = False
 
     server = MultithreadedTCPServer(("0.0.0.0", PORT), PingHandler)
     server.timeout = 1.0
@@ -528,11 +438,7 @@ def run_manager():
 
                 diff = int(current_time - u_last_ping)
                 if u_has_pinged:
-                    status_str = (
-                        f"ONLINE ({diff}s ago)"
-                        if diff <= MAX_NO_PING
-                        else f"TIMEOUT ({diff}s ago)"
-                    )
+                    status_str = f"ONLINE ({diff}s ago)" if diff <= MAX_NO_PING else f"TIMEOUT ({diff}s ago)"
                 else:
                     status_str = f"STARTING... ({diff}s/{MAX_NO_PING}s)"
 
@@ -546,11 +452,8 @@ def run_manager():
                     u_last_ping = last_ping.get(user, 0)
 
                 if current_time - u_last_ping > MAX_NO_PING:
-                    threading.Thread(
-                        target=restart_account, args=(acc,), daemon=True
-                    ).start()
-                    with ping_lock:
-                        last_ping[user] = current_time
+                    threading.Thread(target=restart_account, args=(acc,), daemon=True).start()
+                    with ping_lock: last_ping[user] = current_time
 
             time.sleep(3)
 
@@ -583,18 +486,14 @@ if __name__ == "__main__":
 
         choice = input("Nhập lựa chọn của bạn (0-5): ").strip()
 
-        if choice == "1":
-            config_server_menu()
-        elif choice == "2":
-            manage_clients_menu()
-        elif choice == "3":
-            set_username_menu()
+        if choice == "1": config_server_menu()
+        elif choice == "2": manage_clients_menu()
+        elif choice == "3": set_username_menu()
         elif choice == "4":
             clear_screen()
             run_manager()
             break
-        elif choice == "5":
-            manage_packages_menu()
+        elif choice == "5": manage_packages_menu()
         elif choice == "0":
             safe_print("Đã thoát chương trình.")
             sys.exit(0)
