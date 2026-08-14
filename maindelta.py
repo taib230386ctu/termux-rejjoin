@@ -51,6 +51,58 @@ def clear_screen():
 
 
 # ==============================================================================
+# HÀM ĐO CPU VÀ RAM DÙNG FILE HỆ THỐNG (/proc)
+# ==============================================================================
+def get_system_stats():
+    """Lấy % CPU và % RAM sử dụng"""
+    global last_idle, last_total
+    cpu_usage = 0.0
+    ram_usage = 0.0
+
+    # Tính CPU
+    try:
+        with open("/proc/stat", "r") as f:
+            fields = [float(column) for column in f.readline().strip().split()[1:]]
+        idle_time = fields[3] + fields[4]
+        total_time = sum(fields)
+
+        if last_total != 0:
+            total_diff = total_time - last_total
+            idle_diff = idle_time - last_idle
+            if total_diff > 0:
+                cpu_usage = (1.0 - idle_diff / total_diff) * 100.0
+
+        last_idle = idle_time
+        last_total = total_time
+    except Exception:
+        pass
+
+    # Tính RAM
+    try:
+        with open("/proc/meminfo", "r") as f:
+            mem = {}
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    val = int(parts[1].split()[0])
+                    mem[key] = val
+
+            total_ram = mem.get("MemTotal", 1)
+            free_ram = mem.get("MemFree", 0)
+            buffers = mem.get("Buffers", 0)
+            cached = mem.get("Cached", 0)
+            avail_ram = mem.get("MemAvailable", free_ram + buffers + cached)
+
+            used_ram = total_ram - avail_ram
+            ram_usage = (used_ram / total_ram) * 100.0
+    except Exception:
+        pass
+
+    return cpu_usage, ram_usage
+
+
+# ==============================================================================
 # HÀM QUÉT PACKAGE TRÊN MÁY VÀ ĐỒNG BỘ DỮ LIỆU
 # ==============================================================================
 def get_installed_roblox_packages():
@@ -108,7 +160,7 @@ def sync_packages():
     """Hàm tự động quét máy và đồng bộ với danh sách ACCOUNTS"""
     global ACCOUNTS
     installed = get_installed_roblox_packages()
-    
+
     acc_map = {acc["package"]: acc for acc in ACCOUNTS}
     updated_accounts = []
 
@@ -122,9 +174,9 @@ def sync_packages():
                 "place_id": 1537690962,
                 "vip_link": "",
                 "pkg_enabled": False,  # Mặc định tắt ở Mục 5
-                "client_enabled": True # Trạng thái chạy ở Mục 2
+                "client_enabled": True  # Trạng thái chạy ở Mục 2
             })
-    
+
     ACCOUNTS = updated_accounts
     save_accounts(ACCOUNTS)
 
@@ -182,9 +234,9 @@ def restart_account(acc):
     now_str = time.strftime("%H:%M:%S")
     safe_print(f"[{now_str}] 🚀 Đang khởi chạy: {username} ({pkg})...")
 
-    # 1. Tắt App bằng ROOT
-    kill_cmd = f'su -c "am force-stop {pkg}"'
-    subprocess.run(kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # 1. Tắt chính xác Process của riêng App đó (Chống trảm lây sang Termux/App khác)
+    safe_kill_cmd = f'su -c "pkill -f {pkg} || killall {pkg} || am force-stop {pkg}"'
+    subprocess.run(safe_kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     time.sleep(RESTART_DELAY)
     deep_link = parse_vip_link(vip_link, place_id)
@@ -197,10 +249,10 @@ def restart_account(acc):
     if res.returncode != 0 or "Error" in res.stderr or "unable to resolve" in res.stderr.lower():
         safe_print(f"⚠️ Deep Link thất bại trên [{pkg}]. Đang thử mở trực tiếp via Activity...")
         main_activity = get_main_activity(pkg)
-        
+
         fallback_cmd = f'su -c "am start -n {main_activity} -a android.intent.action.VIEW -d \\"{deep_link}\\""'
         res_fb = subprocess.run(fallback_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
+
         if res_fb.returncode != 0:
             safe_print(f"❌ LỖI KHỞI CHẠY KHÔNG THÀNH CÔNG [{pkg}]:")
             safe_print(f"   [STDERR]: {res_fb.stderr.strip()}")
@@ -216,7 +268,7 @@ def restart_account(acc):
 
 
 # ==============================================================================
-# HÀM QUÉT FILE TÍN HIỆU (FIX LỖI KẸT 0S AGO + HẠ NGƯỠNG XUỐNG 25S)
+# HÀM QUÉT FILE TÍN HIỆU
 # ==============================================================================
 def check_file_pings():
     """Đọc trực tiếp os.time() ghi trong file txt để tránh cache system & cập nhật ngưỡng 25s"""
@@ -226,27 +278,25 @@ def check_file_pings():
         "/sdcard/"
     ]
     current_time = time.time()
-    
+
     for path in search_paths:
         cmd = f'su -c "find {path} -name \\"ping_*.txt\\" 2>/dev/null"'
         res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, text=True)
-        
+
         if res.returncode == 0 and res.stdout:
             files = res.stdout.strip().splitlines()
             for filepath in files:
                 try:
                     filename = os.path.basename(filepath)
                     username = filename.replace("ping_", "").replace(".txt", "").strip()
-                    
-                    # Đọc trực tiếp nội dung số os.time() bên trong file bằng cat
+
                     cat_cmd = f'su -c "cat \\"{filepath}\\""'
                     c_res = subprocess.run(cat_cmd, shell=True, stdout=subprocess.PIPE, text=True)
-                    
+
                     if c_res.returncode == 0 and c_res.stdout.strip().isdigit():
                         file_timestamp = int(c_res.stdout.strip())
                         diff = current_time - file_timestamp
-                        
-                        # CHỈNH NGƯỠNG: File ghi trong 25 giây qua mới ghi nhận là ONLINE
+
                         if 0 <= diff < 25:
                             with ping_lock:
                                 if username in last_ping:
@@ -261,7 +311,7 @@ def check_file_pings():
 # ==============================================================================
 def manage_packages_menu():
     sync_packages()
-    
+
     while True:
         clear_screen()
         safe_print("==========================================")
@@ -465,7 +515,7 @@ def run_manager():
         input("\nNhấn Enter để quay lại Menu...")
         return
 
-    # Khởi chạy HTTP Server lắng nghe phòng trường hợp app chạy được HTTP
+    # Khởi chạy HTTP Server
     server = MultithreadedTCPServer(("0.0.0.0", PORT), PingHandler)
     server.timeout = 1.0
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -480,13 +530,17 @@ def run_manager():
             # Kiểm tra file pings
             check_file_pings()
 
+            # Lấy thông số CPU/RAM
+            cpu_p, ram_p = get_system_stats()
+
             current_time = time.time()
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            safe_print("==========================================")
-            safe_print(f" TERMUX REJOIN MANAGER (HTTP + FILE) | {now_str}")
-            safe_print("==========================================")
+            safe_print("==================================================")
+            safe_print(f" TERMUX REJOIN MANAGER | {now_str}")
+            safe_print(f" 📊 CPU: {cpu_p:.1f}% | RAM: {ram_p:.1f}%")
+            safe_print("==================================================")
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -503,7 +557,7 @@ def run_manager():
 
                 safe_print(f" {user:<15} | {pkg:<10} | {status_str}")
 
-            safe_print("------------------------------------------")
+            safe_print("--------------------------------------------------")
 
             for acc in runnable_accounts:
                 user = acc["username"]
