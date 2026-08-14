@@ -331,7 +331,116 @@ def apply_game_config(target_accounts, title="CLIENT"):
 
 
 # ==============================================================================
-# MỤC MỚI: QUẢN LÝ ĐỔI TÊN PLAYER / USERNAME ROBLOX
+# MỤC 1: CÀI ĐẶT GAME VÀ SERVER CLIENT (ALL HOẶC SINGLE)
+# ==============================================================================
+def config_server_menu():
+    while True:
+        clear_screen()
+        safe_print("==========================================")
+        safe_print("     CẤU HÌNH GAME & SERVER CLIENT        ")
+        safe_print("==========================================")
+
+        for i, acc in enumerate(ACCOUNTS, 1):
+            link_display = acc.get("vip_link", "").strip()
+            p_id = acc.get("place_id", 1537690962)
+
+            if not link_display:
+                link_display = "[Public Server]"
+            elif len(link_display) > 22:
+                link_display = link_display[:19] + "..."
+
+            safe_print(
+                f" [{i}] {acc['username']:<15} | PlaceID: {p_id} | {link_display}"
+            )
+
+        safe_print("------------------------------------------")
+        safe_print(" LỰA CHỌN CÀI ĐẶT:")
+        safe_print(" [99] Cài đặt chung cho TẤT CẢ CLIENT (ALL)")
+        safe_print(" [1-5] Chọn riêng từng Client để cài đặt")
+        safe_print(" [0] Quay lại Menu chính")
+        safe_print("==========================================")
+
+        choice = input("Nhập lựa chọn của bạn: ").strip()
+
+        if choice == "0":
+            break
+
+        elif choice == "99":
+            apply_game_config(ACCOUNTS, title="TẤT CẢ CLIENT (ALL)")
+
+        elif choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(ACCOUNTS):
+                target_acc = ACCOUNTS[idx]
+                apply_game_config([target_acc], title=f"CLIENT {target_acc['username']}")
+
+
+# ==============================================================================
+# MỤC 2: QUẢN LÝ BẬT / TẮT CLIENT & DANH SÁCH PACKAGE
+# ==============================================================================
+def toggle_clients_menu():
+    while True:
+        clear_screen()
+        safe_print("==========================================")
+        safe_print("   QUẢN LÝ PACKAGE & BẬT / TẮT (ON/OFF)  ")
+        safe_print("==========================================")
+
+        for i, acc in enumerate(ACCOUNTS, 1):
+            status_str = "[ON]  BẬT" if acc.get("enabled", True) else "[OFF] TẮT"
+            safe_print(
+                f" [{i}] {status_str:<9} | Package: {acc['package']:<12} | User: {acc['username']}"
+            )
+
+        safe_print("------------------------------------------")
+        safe_print(" CHỨC NĂNG NÂNG CAO:")
+        safe_print(" [88] BẬT TẤT CẢ (ALL ON)")
+        safe_print(" [99] TẮT TẤT CẢ (ALL OFF)")
+        safe_print(" [1-5] Bật/Tắt từng Package tương ứng")
+        safe_print(" [e] Chỉnh sửa Tên App Package (free.nokaX...)")
+        safe_print(" [0] Quay lại Menu chính")
+        safe_print("==========================================")
+
+        choice = input("Nhập lựa chọn của bạn: ").strip().lower()
+
+        if choice == "0":
+            break
+
+        elif choice == "88":
+            for acc in ACCOUNTS:
+                acc["enabled"] = True
+            save_accounts(ACCOUNTS)
+            safe_print("[+] Đã BẬT tất cả các Package!")
+            time.sleep(1)
+
+        elif choice == "99":
+            for acc in ACCOUNTS:
+                acc["enabled"] = False
+            save_accounts(ACCOUNTS)
+            safe_print("[+] Đã TẮT tất cả các Package!")
+            time.sleep(1)
+
+        elif choice == "e":
+            pkg_num = input("Chọn số thứ tự Client muốn sửa Package (1-5): ").strip()
+            if pkg_num.isdigit():
+                idx = int(pkg_num) - 1
+                if 0 <= idx < len(ACCOUNTS):
+                    new_pkg = input(f"Nhập Tên Package mới cho Client {idx+1} (Hiện tại: {ACCOUNTS[idx]['package']}): ").strip()
+                    if new_pkg:
+                        ACCOUNTS[idx]["package"] = new_pkg
+                        save_accounts(ACCOUNTS)
+                        safe_print(f"[+] Đã cập nhật Package thành: [{new_pkg}]")
+                        time.sleep(1)
+
+        elif choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(ACCOUNTS):
+                target_acc = ACCOUNTS[idx]
+                target_acc["enabled"] = not target_acc.get("enabled", True)
+                save_accounts(ACCOUNTS)
+
+
+# ==============================================================================
+# MỤC 3: QUẢN LÝ ĐỔI TÊN PLAYER / USERNAME ROBLOX
 # ==============================================================================
 def set_username_menu():
     while True:
@@ -381,85 +490,7 @@ def set_username_menu():
 
 
 # ==============================================================================
-# MỤC 1: CÀI ĐẶT GAME VÀ SERVER CLIENT (ALL HOẶC SINGLE)
-# ==============================================================================
-def config_server_menu():
-    while True:
-        clear_screen()
-        safe_print("==========================================")
-        safe_print("     CẤU HÌNH GAME & SERVER CLIENT        ")
-        safe_print("==========================================")
-
-        for i, acc in enumerate(ACCOUNTS, 1):
-            link_display = acc.get("vip_link", "").strip()
-            p_id = acc.get("place_id", 1537690962)
-
-            if not link_display:
-                link_display = "[Public Server]"
-            elif len(link_display) > 22:
-                link_display = link_display[:19] + "..."
-
-            safe_print(
-                f" [{i}] {acc['username']:<15} | PlaceID: {p_id} | {link_display}"
-            )
-
-        safe_print("------------------------------------------")
-        safe_print(" LỰA CHỌN CÀI ĐẶT:")
-        safe_print(" [99] Cài đặt chung cho TẤT CẢ CLIENT (ALL)")
-        safe_print(" [1-5] Chọn riêng từng Client để cài đặt")
-        safe_print(" [0] Quay lại Menu chính")
-        safe_print("==========================================")
-
-        choice = input("Nhập lựa chọn của bạn: ").strip()
-
-        if choice == "0":
-            break
-
-        elif choice == "99":
-            apply_game_config(ACCOUNTS, title="TẤT CẢ CLIENT (ALL)")
-
-        elif choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(ACCOUNTS):
-                target_acc = ACCOUNTS[idx]
-                apply_game_config([target_acc], title=f"CLIENT {target_acc['username']}")
-
-
-# ==============================================================================
-# MỤC 2: QUẢN LÝ BẬT / TẮT CLIENT (TOGGLE ON/OFF)
-# ==============================================================================
-def toggle_clients_menu():
-    while True:
-        clear_screen()
-        safe_print("==========================================")
-        safe_print("      QUẢN LÝ BẬT / TẮT CLIENT (ON/OFF)   ")
-        safe_print("==========================================")
-
-        for i, acc in enumerate(ACCOUNTS, 1):
-            status_str = "[ON]  ĐANG BẬT" if acc.get("enabled", True) else "[OFF] ĐANG TẮT"
-            safe_print(
-                f" [{i}] {status_str}  | {acc['username']:<15} ({acc['package']})"
-            )
-
-        safe_print("------------------------------------------")
-        safe_print(" [0] Quay lai Menu chinh")
-        safe_print("==========================================")
-
-        choice = input("Chon So (1-5) de Bat/Tat Client tuong ung: ").strip()
-
-        if choice == "0":
-            break
-
-        if choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(ACCOUNTS):
-                target_acc = ACCOUNTS[idx]
-                target_acc["enabled"] = not target_acc.get("enabled", True)
-                save_accounts(ACCOUNTS)
-
-
-# ==============================================================================
-# MỤC 3: QUẢN LÝ VÒNG LẶP REJOIN (MONITOR)
+# MỤC 4: QUẢN LÝ VÒNG LẶP REJOIN (MONITOR)
 # ==============================================================================
 def run_manager():
     subprocess.run(["stty", "sane"], stderr=subprocess.DEVNULL)
@@ -569,14 +600,14 @@ if __name__ == "__main__":
         safe_print("==========================================")
         safe_print("      TERMUX REJOIN AUTOMATION MENU       ")
         safe_print("==========================================")
-        safe_print(" [1] Cai dat Game & Link Server Client")
-        safe_print(" [2] Bat / Tat Client (ON/OFF)")
-        safe_print(" [3] Doi Ten Player (Roblox Username)")
-        safe_print(" [4] Bat dau chay kich ban Rejoin")
-        safe_print(" [0] Thoat")
+        safe_print(" [1] Cài đặt Game & Link Server Client")
+        safe_print(" [2] Liệt kê Package & Bật/Tắt (ON/OFF)")
+        safe_print(" [3] Đổi Tên Player (Roblox Username)")
+        safe_print(" [4] Bắt đầu chạy kịch bản Rejoin")
+        safe_print(" [0] Thoát")
         safe_print("==========================================")
 
-        choice = input("Nhap lua chon cua ban (0-4): ").strip()
+        choice = input("Nhập lựa chọn của bạn (0-4): ").strip()
 
         if choice == "1":
             config_server_menu()
@@ -589,5 +620,5 @@ if __name__ == "__main__":
             run_manager()
             break
         elif choice == "0":
-            safe_print("Da thoat chuong trinh.")
+            safe_print("Đã thoát chương trình.")
             sys.exit(0)
