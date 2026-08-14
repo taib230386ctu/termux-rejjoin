@@ -12,7 +12,7 @@ import urllib.parse
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
 # ==============================================================================
 PORT = 9999
-MAX_NO_PING = 180
+MAX_NO_PING = 90
 LAUNCH_INTERVAL = 15
 RESTART_DELAY = 3
 CONFIG_FILE = "accounts.json"
