@@ -12,7 +12,7 @@ import urllib.parse
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
 # ==============================================================================
 PORT = 9999
-MAX_NO_PING = 45  # 45s phát hiện dis/kẹt màn hình 273, 276, 285 cực nhanh
+MAX_NO_PING = 60  # 45s phát hiện dis/kẹt màn hình 273, 276, 285 cực nhanh
 LAUNCH_INTERVAL = 15
 RESTART_DELAY = 3
 CONFIG_FILE = "accounts.json"
