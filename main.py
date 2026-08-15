@@ -12,7 +12,7 @@ import urllib.parse
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
 # ==============================================================================
 PORT = 9999
-MAX_NO_PING = 90
+MAX_NO_PING = 45  # 45s phát hiện dis/kẹt màn hình 273, 276, 285 cực nhanh
 LAUNCH_INTERVAL = 15
 RESTART_DELAY = 3
 CONFIG_FILE = "accounts.json"
@@ -46,18 +46,19 @@ def safe_print(text=""):
 
 
 def clear_screen():
-    sys.stdout.write("\033[2J\033[H")
-    sys.stdout.flush()
+    os.system("clear")
 
 
 # ==============================================================================
-# HÀM ĐO CPU VÀ RAM DÙNG FILE HỆ THỐNG (/proc)
+# HÀM ĐO CPU VÀ RAM (HIỂN THỊ DẠNG X.XX GB / Y.YY GB)
 # ==============================================================================
 def get_system_stats():
-    """Lấy % CPU và % RAM sử dụng"""
+    """Lấy % CPU và Dung lượng RAM đã dùng / Tổng RAM (GB)"""
     global last_idle, last_total
     cpu_usage = 0.0
-    ram_usage = 0.0
+    used_gb = 0.0
+    total_gb = 0.0
+    ram_percentage = 0.0
 
     # Tính CPU
     try:
@@ -77,7 +78,7 @@ def get_system_stats():
     except Exception:
         pass
 
-    # Tính RAM
+    # Tính RAM chi tiết theo GB
     try:
         with open("/proc/meminfo", "r") as f:
             mem = {}
@@ -85,21 +86,25 @@ def get_system_stats():
                 parts = line.split(":")
                 if len(parts) == 2:
                     key = parts[0].strip()
-                    val = int(parts[1].split()[0])
+                    val = int(parts[1].split()[0])  # Giá trị tính theo KB
                     mem[key] = val
 
-            total_ram = mem.get("MemTotal", 1)
-            free_ram = mem.get("MemFree", 0)
-            buffers = mem.get("Buffers", 0)
-            cached = mem.get("Cached", 0)
-            avail_ram = mem.get("MemAvailable", free_ram + buffers + cached)
+            total_ram_kb = mem.get("MemTotal", 1)
+            free_ram_kb = mem.get("MemFree", 0)
+            buffers_kb = mem.get("Buffers", 0)
+            cached_kb = mem.get("Cached", 0)
+            avail_ram_kb = mem.get("MemAvailable", free_ram_kb + buffers_kb + cached_kb)
 
-            used_ram = total_ram - avail_ram
-            ram_usage = (used_ram / total_ram) * 100.0
+            used_ram_kb = total_ram_kb - avail_ram_kb
+            
+            # Đổi từ KB sang GB
+            used_gb = used_ram_kb / (1024 * 1024)
+            total_gb = total_ram_kb / (1024 * 1024)
+            ram_percentage = (used_ram_kb / total_ram_kb) * 100.0
     except Exception:
         pass
 
-    return cpu_usage, ram_usage
+    return cpu_usage, used_gb, total_gb, ram_percentage
 
 
 # ==============================================================================
@@ -160,28 +165,30 @@ def sync_packages():
     """Hàm tự động quét máy và đồng bộ với danh sách ACCOUNTS"""
     global ACCOUNTS
     installed = get_installed_roblox_packages()
-    
+
     acc_map = {acc["package"]: acc for acc in ACCOUNTS}
     updated_accounts = []
 
+    for acc in ACCOUNTS:
+        updated_accounts.append(acc)
+
+    existing_pkgs = [acc["package"] for acc in ACCOUNTS]
     for pkg in installed:
-        if pkg in acc_map:
-            updated_accounts.append(acc_map[pkg])
-        else:
+        if pkg not in existing_pkgs:
             updated_accounts.append({
                 "package": pkg,
                 "username": f"Player_{pkg.split('.')[-1]}",
                 "place_id": 1537690962,
                 "vip_link": "",
-                "pkg_enabled": False,  # Mặc định tắt ở Mục 5
-                "client_enabled": True # Trạng thái chạy ở Mục 2
+                "pkg_enabled": True,
+                "client_enabled": True
             })
-    
+
     ACCOUNTS = updated_accounts
     save_accounts(ACCOUNTS)
 
 
-# Tải & đồng bộ lúc khởi động
+# Đồng bộ lúc khởi động
 sync_packages()
 
 last_ping = {acc["username"]: 0 for acc in ACCOUNTS}
@@ -211,7 +218,6 @@ def parse_vip_link(vip_link, place_id):
 
 
 def get_main_activity(pkg):
-    """Tự động tìm Activity khởi chạy thực tế của Package bằng ROOT"""
     try:
         cmd = f'su -c "cmd package resolve-activity --brief {pkg}"'
         res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
@@ -232,35 +238,35 @@ def restart_account(acc):
     vip_link = acc.get("vip_link", "")
 
     now_str = time.strftime("%H:%M:%S")
-    safe_print(f"[{now_str}] 🚀 Đang khởi chạy: {username} ({pkg})...")
+    safe_print(f"[{now_str}] 🚀 Đang khởi chạy lại: {username} ({pkg})...")
 
-    # 1. Tắt App bằng ROOT
-    kill_cmd = f'su -c "am force-stop {pkg}"'
-    subprocess.run(kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Ép tắt triệt để Package
+    safe_kill_cmd = f'su -c "am force-stop {pkg}; kill -9 \$(pgrep -f {pkg})"'
+    subprocess.run(safe_kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Xóa file ping cũ
+    for p_path in ["/sdcard/Delta/workspace/", "/sdcard/Android/data/", "/sdcard/"]:
+        p_file = os.path.join(p_path, f"ping_{username}.txt")
+        subprocess.run(f'su -c "rm -f {p_file}"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     time.sleep(RESTART_DELAY)
     deep_link = parse_vip_link(vip_link, place_id)
 
-    # 2. Mở bằng Deep Link qua ROOT
     launch_cmd = f'su -c "am start -a android.intent.action.VIEW -d \\"{deep_link}\\" -p \\"{pkg}\\""'
     res = subprocess.run(launch_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    # 3. Dự phòng nếu Deep Link gặp lỗi
     if res.returncode != 0 or "Error" in res.stderr or "unable to resolve" in res.stderr.lower():
-        safe_print(f"⚠️ Deep Link thất bại trên [{pkg}]. Đang thử mở trực tiếp via Activity...")
+        safe_print(f"⚠️ Deep Link lỗi [{pkg}]. Mở trực tiếp via Activity...")
         main_activity = get_main_activity(pkg)
-        
+
         fallback_cmd = f'su -c "am start -n {main_activity} -a android.intent.action.VIEW -d \\"{deep_link}\\""'
         res_fb = subprocess.run(fallback_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
+
         if res_fb.returncode != 0:
-            safe_print(f"❌ LỖI KHỞI CHẠY KHÔNG THÀNH CÔNG [{pkg}]:")
-            safe_print(f"   [STDERR]: {res_fb.stderr.strip()}")
-            safe_print("-> Thử mở App mặc định...")
             monkey_cmd = f'su -c "monkey -p {pkg} -c android.intent.category.LAUNCHER 1"'
             subprocess.run(monkey_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
-        safe_print(f"✅ Đã gửi lệnh mở [{pkg}] thành công!")
+        safe_print(f"✅ Mở [{pkg}] thành công!")
 
     with ping_lock:
         last_ping[username] = time.time()
@@ -271,33 +277,32 @@ def restart_account(acc):
 # HÀM QUÉT FILE TÍN HIỆU
 # ==============================================================================
 def check_file_pings():
-    """Đọc trực tiếp os.time() ghi trong file txt để tránh cache system & cập nhật ngưỡng 25s"""
     search_paths = [
         "/sdcard/Delta/workspace/",
         "/sdcard/Android/data/",
         "/sdcard/"
     ]
     current_time = time.time()
-    
+
     for path in search_paths:
         cmd = f'su -c "find {path} -name \\"ping_*.txt\\" 2>/dev/null"'
         res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, text=True)
-        
+
         if res.returncode == 0 and res.stdout:
             files = res.stdout.strip().splitlines()
             for filepath in files:
                 try:
                     filename = os.path.basename(filepath)
                     username = filename.replace("ping_", "").replace(".txt", "").strip()
-                    
+
                     cat_cmd = f'su -c "cat \\"{filepath}\\""'
                     c_res = subprocess.run(cat_cmd, shell=True, stdout=subprocess.PIPE, text=True)
-                    
+
                     if c_res.returncode == 0 and c_res.stdout.strip().isdigit():
                         file_timestamp = int(c_res.stdout.strip())
                         diff = current_time - file_timestamp
-                        
-                        if 0 <= diff < 25:
+
+                        if 0 <= diff < 20:
                             with ping_lock:
                                 if username in last_ping:
                                     last_ping[username] = current_time
@@ -307,32 +312,34 @@ def check_file_pings():
 
 
 # ==============================================================================
-# MỤC 5: QUẢN LÝ PACKAGE TRÊN MÁY (BẬT/TẮT PACKAGE)
+# MENU GIAO DIỆN
 # ==============================================================================
 def manage_packages_menu():
     sync_packages()
-    
     while True:
         clear_screen()
-        safe_print("==========================================")
-        safe_print("   QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY     ")
-        safe_print("==========================================")
+        print("==========================================")
+        print("   QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY     ")
+        print("==========================================")
 
         if not ACCOUNTS:
-            safe_print("[!] Không tìm thấy Package Roblox/Noka nào trên máy!")
+            print("[!] Không tìm thấy Package Roblox/Noka nào trên máy!")
         else:
             for i, acc in enumerate(ACCOUNTS, 1):
-                status = "[ON]  BẬT" if acc.get("pkg_enabled", False) else "[OFF] TẮT"
-                safe_print(f" [{i}] {status} | Package: {acc['package']}")
+                status = "[ON]  BẬT" if acc.get("pkg_enabled", True) else "[OFF] TẮT"
+                print(f" [{i}] {status} | Package: {acc['package']}")
 
-        safe_print("------------------------------------------")
-        safe_print(" [1-N] Nhập số thứ tự để BẬT/TẮT Package tương ứng")
-        safe_print(" [88]  BẬT TẤT CẢ PACKAGE")
-        safe_print(" [99]  TẮT TẤT CẢ PACKAGE")
-        safe_print(" [0]   Quay lại Menu chính")
-        safe_print("==========================================")
+        print("------------------------------------------")
+        print(" [1-N] Nhập số thứ tự để BẬT/TẮT Package")
+        print(" [88]  BẬT TẤT CẢ PACKAGE")
+        print(" [99]  TẮT TẤT CẢ PACKAGE")
+        print(" [0]   Quay lại Menu chính")
+        print("==========================================")
 
-        choice = input("Nhập lựa chọn của bạn: ").strip()
+        try:
+            choice = input("Nhập lựa chọn của bạn: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
 
         if choice == "0":
             break
@@ -345,38 +352,35 @@ def manage_packages_menu():
         elif choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(ACCOUNTS):
-                ACCOUNTS[idx]["pkg_enabled"] = not ACCOUNTS[idx].get("pkg_enabled", False)
+                ACCOUNTS[idx]["pkg_enabled"] = not ACCOUNTS[idx].get("pkg_enabled", True)
                 save_accounts(ACCOUNTS)
 
 
-# ==============================================================================
-# MỤC 2: QUẢN LÝ CLIENT
-# ==============================================================================
 def manage_clients_menu():
     while True:
-        active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False)]
+        active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
 
         clear_screen()
-        safe_print("==========================================")
-        safe_print("  DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)   ")
-        safe_print("==========================================")
+        print("==========================================")
+        print("  DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)   ")
+        print("==========================================")
 
         if not active_pkgs:
-            safe_print("[!] Chưa có Package nào được BẬT ở Mục [5]!")
-            safe_print("[!] Vui lòng vào Mục [5] để chọn BẬT Package trước.")
+            print("[!] Chưa có Package nào được BẬT ở Mục [5]!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 status = "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
-                safe_print(
-                    f" [{i}] {status:<9} | Player: {acc['username']:<15} | App: {acc['package']}"
-                )
+                print(f" [{i}] {status:<9} | Player: {acc['username']:<15} | App: {acc['package']}")
 
-        safe_print("------------------------------------------")
-        safe_print(" [1-N] Nhập số để Bật/Tắt trạng thái chạy của Client")
-        safe_print(" [0]   Quay lại Menu chính")
-        safe_print("==========================================")
+        print("------------------------------------------")
+        print(" [1-N] Nhập số để Bật/Tắt trạng thái Client")
+        print(" [0]   Quay lại Menu chính")
+        print("==========================================")
 
-        choice = input("Nhập lựa chọn của bạn: ").strip()
+        try:
+            choice = input("Nhập lựa chọn của bạn: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
 
         if choice == "0":
             break
@@ -387,30 +391,30 @@ def manage_clients_menu():
                 save_accounts(ACCOUNTS)
 
 
-# ==============================================================================
-# MỤC 3: ĐỔI TÊN PLAYER
-# ==============================================================================
 def set_username_menu():
     while True:
-        active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False)]
+        active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
 
         clear_screen()
-        safe_print("==========================================")
-        safe_print("        ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
-        safe_print("==========================================")
+        print("==========================================")
+        print("        ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
+        print("==========================================")
 
         if not active_pkgs:
-            safe_print("[!] Hãy BẬT Package ở Mục [5] trước khi đổi tên Player!")
+            print("[!] Hãy BẬT Package ở Mục [5] trước khi đổi tên!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                safe_print(f" [{i}] User: {acc['username']:<15} | App: {acc['package']}")
+                print(f" [{i}] User: {acc['username']:<15} | App: {acc['package']}")
 
-        safe_print("------------------------------------------")
-        safe_print(" [1-N] Chọn Client để đổi tên Player tương ứng")
-        safe_print(" [0]   Quay lại Menu chính")
-        safe_print("==========================================")
+        print("------------------------------------------")
+        print(" [1-N] Chọn Client để đổi tên Player tương ứng")
+        print(" [0]   Quay lại Menu chính")
+        print("==========================================")
 
-        choice = input("Nhập lựa chọn của bạn: ").strip()
+        try:
+            choice = input("Nhập lựa chọn của bạn: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
 
         if choice == "0":
             break
@@ -419,41 +423,41 @@ def set_username_menu():
             if 0 <= idx < len(active_pkgs):
                 acc = active_pkgs[idx]
                 old_name = acc["username"]
-                new_name = input(f"\nNhập Username Roblox mới cho [{acc['package']}] (Cũ: {old_name}): ").strip()
+                new_name = input(f"\nNhập Username mới cho [{acc['package']}] (Cũ: {old_name}): ").strip()
                 if new_name:
                     acc["username"] = new_name
                     save_accounts(ACCOUNTS)
-                    safe_print(f"[+] Đã đổi tên thành công: [{new_name}]")
+                    print(f"[+] Đã đổi tên thành công: [{new_name}]")
                     time.sleep(1)
 
 
-# ==============================================================================
-# MỤC 1: CẤU HÌNH GAME
-# ==============================================================================
 def config_server_menu():
     while True:
-        active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False)]
+        active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
 
         clear_screen()
-        safe_print("==========================================")
-        safe_print("     CẤU HÌNH GAME & SERVER CLIENT         ")
-        safe_print("==========================================")
+        print("==========================================")
+        print("     CẤU HÌNH GAME & SERVER CLIENT         ")
+        print("==========================================")
 
         if not active_pkgs:
-            safe_print("[!] Hãy BẬT Package ở Mục [5] trước khi cài đặt Game!")
+            print("[!] Hãy BẬT Package ở Mục [5] trước khi cài đặt!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 link_display = acc.get("vip_link", "").strip() or "[Public Server]"
                 if len(link_display) > 20: link_display = link_display[:17] + "..."
-                safe_print(f" [{i}] {acc['username']:<15} | PlaceID: {acc.get('place_id', 1537690962)} | {link_display}")
+                print(f" [{i}] {acc['username']:<15} | PlaceID: {acc.get('place_id', 1537690962)} | {link_display}")
 
-        safe_print("------------------------------------------")
-        safe_print(" [99]  Cài đặt cho TẤT CẢ Client đang mở")
-        safe_print(" [1-N] Chọn riêng từng Client để cài đặt")
-        safe_print(" [0]   Quay lại Menu chính")
-        safe_print("==========================================")
+        print("------------------------------------------")
+        print(" [99]  Cài đặt cho TẤT CẢ Client đang mở")
+        print(" [1-N] Chọn riêng từng Client để cài đặt")
+        print(" [0]   Quay lại Menu chính")
+        print("==========================================")
 
-        choice = input("Nhập lựa chọn của bạn: ").strip()
+        try:
+            choice = input("Nhập lựa chọn của bạn: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
 
         if choice == "0":
             break
@@ -463,7 +467,7 @@ def config_server_menu():
                 if inp.isdigit(): acc["place_id"] = int(inp)
                 else: acc["vip_link"] = inp
             save_accounts(ACCOUNTS)
-            safe_print("[+] Cập nhật thành công!")
+            print("[+] Cập nhật thành công!")
             time.sleep(1)
         elif choice.isdigit():
             idx = int(choice) - 1
@@ -473,7 +477,7 @@ def config_server_menu():
                 if inp.isdigit(): target_acc["place_id"] = int(inp)
                 else: target_acc["vip_link"] = inp
                 save_accounts(ACCOUNTS)
-                safe_print("[+] Cập nhật thành công!")
+                print("[+] Cập nhật thành công!")
                 time.sleep(1)
 
 
@@ -507,11 +511,11 @@ class PingHandler(http.server.BaseHTTPRequestHandler):
 
 
 def run_manager():
-    runnable_accounts = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", False) and acc.get("client_enabled", True)]
+    runnable_accounts = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True) and acc.get("client_enabled", True)]
 
     if not runnable_accounts:
-        safe_print("\n[!] Không có Client nào đủ điều kiện chạy!")
-        safe_print("[!] Hãy chắc chắn bạn đã: BẬT Package ở Mục [5] VÀ BẬT Client ở Mục [2].")
+        print("\n[!] Không có Client nào đủ điều kiện chạy!")
+        print("[!] Hãy kiểm tra lại Mục [5] và Mục [2].")
         input("\nNhấn Enter để quay lại Menu...")
         return
 
@@ -520,27 +524,27 @@ def run_manager():
     server.timeout = 1.0
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    safe_print("\n[+] Đang khởi chạy danh sách app...")
+    print("\n[+] Đang khởi chạy danh sách app...")
     for acc in runnable_accounts:
         restart_account(acc)
         time.sleep(LAUNCH_INTERVAL)
 
     try:
         while True:
-            # Kiểm tra file pings
             check_file_pings()
-
-            # Lấy thông số CPU/RAM
-            cpu_p, ram_p = get_system_stats()
+            
+            # Lấy thông số CPU và RAM chuẩn GB
+            cpu_p, used_gb, total_gb, ram_p = get_system_stats()
 
             current_time = time.time()
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            safe_print("==================================================")
-            safe_print(f" TERMUX REJOIN MANAGER | {now_str}")
-            safe_print(f" 📊 CPU: {cpu_p:.1f}% | RAM: {ram_p:.1f}%")
-            safe_print("==================================================")
+            print("==================================================")
+            print(f" TERMUX REJOIN MANAGER | {now_str}")
+            # DÒNG HIỂN THỊ THÔNG SỐ RAM MỚI: X.XXGB/Y.YYGB (ZZ%)
+            print(f" 📊 CPU: {cpu_p:.1f}% | RAM: {used_gb:.2f}GB/{total_gb:.2f}GB ({ram_p:.1f}%)")
+            print("==================================================")
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -555,9 +559,9 @@ def run_manager():
                 else:
                     status_str = f"STARTING/TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
-                safe_print(f" {user:<15} | {pkg:<10} | {status_str}")
+                print(f" {user:<15} | {pkg:<10} | {status_str}")
 
-            safe_print("--------------------------------------------------")
+            print("--------------------------------------------------")
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -571,7 +575,7 @@ def run_manager():
             time.sleep(3)
 
     except KeyboardInterrupt:
-        safe_print("\n[!] Đã dừng chương trình.")
+        print("\n[!] Đã dừng chương trình.")
     finally:
         server.shutdown()
         server.server_close()
@@ -586,18 +590,21 @@ if __name__ == "__main__":
 
     while True:
         clear_screen()
-        safe_print("==========================================")
-        safe_print("      TERMUX REJOIN AUTOMATION MENU       ")
-        safe_print("==========================================")
-        safe_print(" [1] Cài đặt Game & Link Server Client")
-        safe_print(" [2] Quản lý Client (Xem các Package chọn ở Mục 5)")
-        safe_print(" [3] Đổi Tên Player (Roblox Username)")
-        safe_print(" [4] Bắt đầu chạy kịch bản Rejoin")
-        safe_print(" [5] Quản lý Package trên máy (Chọn ON/OFF Package)")
-        safe_print(" [0] Thoát")
-        safe_print("==========================================")
+        print("==========================================")
+        print("      TERMUX REJOIN AUTOMATION MENU       ")
+        print("==========================================")
+        print(" [1] Cài đặt Game & Link Server Client")
+        print(" [2] Quản lý Client (Bật/Tắt trạng thái)")
+        print(" [3] Đổi Tên Player (Roblox Username)")
+        print(" [4] Bắt đầu chạy kịch bản Rejoin")
+        print(" [5] Quản lý Package trên máy (Bật/Tắt App)")
+        print(" [0] Thoát")
+        print("==========================================")
 
-        choice = input("Nhập lựa chọn của bạn (0-5): ").strip()
+        try:
+            choice = input("Nhập lựa chọn của bạn (0-5): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(0)
 
         if choice == "1": config_server_menu()
         elif choice == "2": manage_clients_menu()
@@ -608,5 +615,5 @@ if __name__ == "__main__":
             break
         elif choice == "5": manage_packages_menu()
         elif choice == "0":
-            safe_print("Đã thoát chương trình.")
+            print("Đã thoát chương trình.")
             sys.exit(0)
