@@ -13,7 +13,7 @@ import urllib.parse
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
 # ==============================================================================
 PORT = 9999
-MAX_NO_PING = 90  # Đã đổi thành 90s chuẩn theo yêu cầu
+MAX_NO_PING = 90
 LAUNCH_INTERVAL = 15
 RESTART_DELAY = 3
 CONFIG_FILE = "accounts.json"
@@ -232,7 +232,8 @@ def restart_account(acc):
     now_str = time.strftime("%H:%M:%S")
     safe_print(f"[{now_str}] Launching: {username} ({pkg})...")
 
-    safe_kill_cmd = f'su -c "am force-stop {pkg}; kill -9 \$(pgrep -f {pkg})"'
+    # Sử dụng chuỗi Raw String rf'...' để không bị lỗi SyntaxWarning
+    safe_kill_cmd = rf'su -c "am force-stop {pkg}; kill -9 \$(pgrep -f {pkg})"'
     subprocess.run(safe_kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     for p_path in ["/sdcard/Delta/workspace/", "/sdcard/Android/data/", "/sdcard/"]:
@@ -527,7 +528,6 @@ def run_manager():
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            # BẢNG HIỂN THỊ CHUẨN CĂN CHỈNH TỰ ĐỘNG - KHÔNG BAO GIỜ VỠ
             print("=" * 62)
             print(f" TERMUX REJOIN MANAGER | TIME: {now_str}")
             print(f" CPU: {cpu_p:.1f}%  |  RAM: {used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)")
@@ -539,7 +539,6 @@ def run_manager():
                 user = acc["username"]
                 pkg = acc["package"]
                 
-                # Cắt ngắn nếu tên quá dài gây vỡ bảng
                 disp_user = user[:15] if len(user) > 15 else user
                 disp_pkg = pkg.replace("free.", "")[:11] if len(pkg) > 11 else pkg
 
@@ -557,7 +556,6 @@ def run_manager():
 
             print("-" * 62)
 
-            # Lệnh kiểm tra restart app kẹt
             for acc in runnable_accounts:
                 user = acc["username"]
                 with ping_lock:
