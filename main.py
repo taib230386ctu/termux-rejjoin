@@ -1,4 +1,3 @@
-cat << 'EOF' > rejoin.py
 import http.server
 import json
 import os
