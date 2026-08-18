@@ -1,3 +1,4 @@
+cat << 'EOF' > rejoin.py
 import http.server
 import json
 import os
@@ -12,7 +13,7 @@ import urllib.parse
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
 # ==============================================================================
 PORT = 9999
-MAX_NO_PING = 90  # 45s phát hiện dis/kẹt màn hình 273, 276, 285 cực nhanh
+MAX_NO_PING = 90  # Đã đổi thành 90s chuẩn theo yêu cầu
 LAUNCH_INTERVAL = 15
 RESTART_DELAY = 3
 CONFIG_FILE = "accounts.json"
@@ -50,7 +51,7 @@ def clear_screen():
 
 
 # ==============================================================================
-# HÀM ĐO CPU VÀ RAM (HIỂN THỊ DẠNG X.XX GB / Y.YY GB)
+# HÀM ĐO CPU VÀ RAM
 # ==============================================================================
 def get_system_stats():
     """Lấy % CPU và Dung lượng RAM đã dùng / Tổng RAM (GB)"""
@@ -86,7 +87,7 @@ def get_system_stats():
                 parts = line.split(":")
                 if len(parts) == 2:
                     key = parts[0].strip()
-                    val = int(parts[1].split()[0])  # Giá trị tính theo KB
+                    val = int(parts[1].split()[0])
                     mem[key] = val
 
             total_ram_kb = mem.get("MemTotal", 1)
@@ -96,8 +97,6 @@ def get_system_stats():
             avail_ram_kb = mem.get("MemAvailable", free_ram_kb + buffers_kb + cached_kb)
 
             used_ram_kb = total_ram_kb - avail_ram_kb
-            
-            # Đổi từ KB sang GB
             used_gb = used_ram_kb / (1024 * 1024)
             total_gb = total_ram_kb / (1024 * 1024)
             ram_percentage = (used_ram_kb / total_ram_kb) * 100.0
@@ -111,7 +110,6 @@ def get_system_stats():
 # HÀM QUÉT PACKAGE TRÊN MÁY VÀ ĐỒNG BỘ DỮ LIỆU
 # ==============================================================================
 def get_installed_roblox_packages():
-    """Quét thực tế các ứng dụng Roblox/Noka/Clone đang cài trên máy"""
     try:
         res = subprocess.run(
             ["su", "-c", "pm list packages"],
@@ -137,7 +135,6 @@ def get_installed_roblox_packages():
 
 
 def load_accounts():
-    """Tải cấu hình từ file json"""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -150,7 +147,6 @@ def load_accounts():
 
 
 def save_accounts(data):
-    """Lưu cấu hình ra file json"""
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -162,13 +158,10 @@ ACCOUNTS = load_accounts()
 
 
 def sync_packages():
-    """Hàm tự động quét máy và đồng bộ với danh sách ACCOUNTS"""
     global ACCOUNTS
     installed = get_installed_roblox_packages()
 
-    acc_map = {acc["package"]: acc for acc in ACCOUNTS}
     updated_accounts = []
-
     for acc in ACCOUNTS:
         updated_accounts.append(acc)
 
@@ -188,7 +181,6 @@ def sync_packages():
     save_accounts(ACCOUNTS)
 
 
-# Đồng bộ lúc khởi động
 sync_packages()
 
 last_ping = {acc["username"]: 0 for acc in ACCOUNTS}
@@ -238,13 +230,11 @@ def restart_account(acc):
     vip_link = acc.get("vip_link", "")
 
     now_str = time.strftime("%H:%M:%S")
-    safe_print(f"[{now_str}] 🚀 Đang khởi chạy lại: {username} ({pkg})...")
+    safe_print(f"[{now_str}] Launching: {username} ({pkg})...")
 
-    # Ép tắt triệt để Package
     safe_kill_cmd = f'su -c "am force-stop {pkg}; kill -9 \$(pgrep -f {pkg})"'
     subprocess.run(safe_kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # Xóa file ping cũ
     for p_path in ["/sdcard/Delta/workspace/", "/sdcard/Android/data/", "/sdcard/"]:
         p_file = os.path.join(p_path, f"ping_{username}.txt")
         subprocess.run(f'su -c "rm -f {p_file}"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -256,7 +246,7 @@ def restart_account(acc):
     res = subprocess.run(launch_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     if res.returncode != 0 or "Error" in res.stderr or "unable to resolve" in res.stderr.lower():
-        safe_print(f"⚠️ Deep Link lỗi [{pkg}]. Mở trực tiếp via Activity...")
+        safe_print(f"Deep Link Failed [{pkg}]. Opening via Activity...")
         main_activity = get_main_activity(pkg)
 
         fallback_cmd = f'su -c "am start -n {main_activity} -a android.intent.action.VIEW -d \\"{deep_link}\\""'
@@ -266,7 +256,7 @@ def restart_account(acc):
             monkey_cmd = f'su -c "monkey -p {pkg} -c android.intent.category.LAUNCHER 1"'
             subprocess.run(monkey_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
-        safe_print(f"✅ Mở [{pkg}] thành công!")
+        safe_print(f"OK [{pkg}] Launched!")
 
     with ping_lock:
         last_ping[username] = time.time()
@@ -312,32 +302,32 @@ def check_file_pings():
 
 
 # ==============================================================================
-# MENU GIAO DIỆN
+# MENU GIAO DIỆN CHUẨN
 # ==============================================================================
 def manage_packages_menu():
     sync_packages()
     while True:
         clear_screen()
         print("==========================================")
-        print("   QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY     ")
+        print("    QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY     ")
         print("==========================================")
 
         if not ACCOUNTS:
-            print("[!] Không tìm thấy Package Roblox/Noka nào trên máy!")
+            print("[!] Không tìm thấy Package Roblox/Noka nào!")
         else:
             for i, acc in enumerate(ACCOUNTS, 1):
                 status = "[ON]  BẬT" if acc.get("pkg_enabled", True) else "[OFF] TẮT"
-                print(f" [{i}] {status} | Package: {acc['package']}")
+                print(f" [{i}] {status} | App: {acc['package']}")
 
         print("------------------------------------------")
-        print(" [1-N] Nhập số thứ tự để BẬT/TẮT Package")
+        print(" [1-N] Nhập số để BẬT/TẮT Package")
         print(" [88]  BẬT TẤT CẢ PACKAGE")
         print(" [99]  TẮT TẤT CẢ PACKAGE")
         print(" [0]   Quay lại Menu chính")
         print("==========================================")
 
         try:
-            choice = input("Nhập lựa chọn của bạn: ").strip()
+            choice = input("Lựa chọn: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -362,7 +352,7 @@ def manage_clients_menu():
 
         clear_screen()
         print("==========================================")
-        print("  DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)   ")
+        print("   DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)   ")
         print("==========================================")
 
         if not active_pkgs:
@@ -370,7 +360,7 @@ def manage_clients_menu():
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 status = "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
-                print(f" [{i}] {status:<9} | Player: {acc['username']:<15} | App: {acc['package']}")
+                print(f" [{i}] {status:<9} | User: {acc['username']:<15} | App: {acc['package']}")
 
         print("------------------------------------------")
         print(" [1-N] Nhập số để Bật/Tắt trạng thái Client")
@@ -378,7 +368,7 @@ def manage_clients_menu():
         print("==========================================")
 
         try:
-            choice = input("Nhập lựa chọn của bạn: ").strip()
+            choice = input("Lựa chọn: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -397,7 +387,7 @@ def set_username_menu():
 
         clear_screen()
         print("==========================================")
-        print("        ĐỔI TÊN PLAYER (ROBLOX USERNAME)    ")
+        print("         ĐỔI TÊN PLAYER (USERNAME)        ")
         print("==========================================")
 
         if not active_pkgs:
@@ -412,7 +402,7 @@ def set_username_menu():
         print("==========================================")
 
         try:
-            choice = input("Nhập lựa chọn của bạn: ").strip()
+            choice = input("Lựa chọn: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -437,7 +427,7 @@ def config_server_menu():
 
         clear_screen()
         print("==========================================")
-        print("     CẤU HÌNH GAME & SERVER CLIENT         ")
+        print("      CẤU HÌNH GAME & SERVER CLIENT       ")
         print("==========================================")
 
         if not active_pkgs:
@@ -455,7 +445,7 @@ def config_server_menu():
         print("==========================================")
 
         try:
-            choice = input("Nhập lựa chọn của bạn: ").strip()
+            choice = input("Lựa chọn: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -473,7 +463,7 @@ def config_server_menu():
             idx = int(choice) - 1
             if 0 <= idx < len(active_pkgs):
                 target_acc = active_pkgs[idx]
-                inp = input(f"\nNhập PlaceID HOẶC Link Server VIP cho [{target_acc['username']}]: ").strip()
+                inp = input(f"\nNhập PlaceID HOẶC Link VIP cho [{target_acc['username']}]: ").strip()
                 if inp.isdigit(): target_acc["place_id"] = int(inp)
                 else: target_acc["vip_link"] = inp
                 save_accounts(ACCOUNTS)
@@ -532,23 +522,27 @@ def run_manager():
     try:
         while True:
             check_file_pings()
-            
-            # Lấy thông số CPU và RAM chuẩn GB
             cpu_p, used_gb, total_gb, ram_p = get_system_stats()
-
             current_time = time.time()
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            print("==================================================")
-            print(f" TERMUX REJOIN MANAGER | {now_str}")
-            # DÒNG HIỂN THỊ THÔNG SỐ RAM MỚI: X.XXGB/Y.YYGB (ZZ%)
-            print(f" 📊 CPU: {cpu_p:.1f}% | RAM: {used_gb:.2f}GB/{total_gb:.2f}GB ({ram_p:.1f}%)")
-            print("==================================================")
+            # BẢNG HIỂN THỊ CHUẨN CĂN CHỈNH TỰ ĐỘNG - KHÔNG BAO GIỜ VỠ
+            print("=" * 62)
+            print(f" TERMUX REJOIN MANAGER | TIME: {now_str}")
+            print(f" CPU: {cpu_p:.1f}%  |  RAM: {used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)")
+            print("=" * 62)
+            print(f" {'USER':<16} | {'APP':<12} | {'STATUS'}")
+            print("-" * 62)
 
             for acc in runnable_accounts:
                 user = acc["username"]
                 pkg = acc["package"]
+                
+                # Cắt ngắn nếu tên quá dài gây vỡ bảng
+                disp_user = user[:15] if len(user) > 15 else user
+                disp_pkg = pkg.replace("free.", "")[:11] if len(pkg) > 11 else pkg
+
                 with ping_lock:
                     u_last_ping = last_ping.get(user, 0)
                     u_has_pinged = has_pinged.get(user, False)
@@ -557,12 +551,13 @@ def run_manager():
                 if u_has_pinged and diff <= MAX_NO_PING:
                     status_str = f"ONLINE ({diff}s ago)"
                 else:
-                    status_str = f"STARTING/TIMEOUT ({diff}s/{MAX_NO_PING}s)"
+                    status_str = f"TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
-                print(f" {user:<15} | {pkg:<10} | {status_str}")
+                print(f" {disp_user:<16} | {disp_pkg:<12} | {status_str}")
 
-            print("--------------------------------------------------")
+            print("-" * 62)
 
+            # Lệnh kiểm tra restart app kẹt
             for acc in runnable_accounts:
                 user = acc["username"]
                 with ping_lock:
@@ -602,7 +597,7 @@ if __name__ == "__main__":
         print("==========================================")
 
         try:
-            choice = input("Nhập lựa chọn của bạn (0-5): ").strip()
+            choice = input("Lựa chọn (0-5): ").strip()
         except (KeyboardInterrupt, EOFError):
             sys.exit(0)
 
@@ -617,3 +612,4 @@ if __name__ == "__main__":
         elif choice == "0":
             print("Đã thoát chương trình.")
             sys.exit(0)
+EOF
