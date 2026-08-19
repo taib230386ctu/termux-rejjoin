@@ -8,7 +8,6 @@ import threading
 import time
 import urllib.parse
 from prompt_toolkit import prompt
-from tabulate import tabulate
 
 # ==============================================================================
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
@@ -291,24 +290,29 @@ def check_file_pings():
 
 
 # ==============================================================================
-# GIAO DIỆN TABULATE & SUB-MENUS
+# GIAO DIỆN ASCII SUB-MENUS
 # ==============================================================================
 def manage_packages_menu():
     sync_packages()
     while True:
         clear_screen()
-        print("=== QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY ===")
+        print("=" * 50)
+        print("      QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY")
+        print("=" * 50)
         
-        table_data = []
         if not ACCOUNTS:
-            table_data.append(["-", "Trống", "Không tìm thấy Package Roblox/Noka nào!"])
+            print(" [!] Không tìm thấy Package Roblox/Noka nào!")
         else:
             for i, acc in enumerate(ACCOUNTS, 1):
-                status = "[ON] BẬT" if acc.get("pkg_enabled", True) else "[OFF] TẮT"
-                table_data.append([i, status, acc['package']])
+                status = "[ON] " if acc.get("pkg_enabled", True) else "[OFF]"
+                print(f" [{i}] {status} | App: {acc['package']}")
 
-        print(tabulate(table_data, headers=["STT", "Trạng thái", "Package / App"], tablefmt="rounded_grid"))
-        print("\n[1-N] Bật/Tắt Package | [88] Bật tất cả | [99] Tắt tất cả | [0] Quay lại")
+        print("-" * 50)
+        print(" [1-N] Nhập số để BẬT/TẮT Package tương ứng")
+        print(" [88]  BẬT TẤT CẢ PACKAGE")
+        print(" [99]  TẮT TẤT CẢ PACKAGE")
+        print(" [0]   Quay lại Menu chính")
+        print("=" * 50)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -334,18 +338,21 @@ def manage_clients_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
-        print("=== DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON) ===")
+        print("=" * 50)
+        print("    DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)")
+        print("=" * 50)
 
-        table_data = []
         if not active_pkgs:
-            table_data.append(["-", "Trống", "Chưa có Package nào được BẬT ở Mục [5]!", "-"])
+            print(" [!] Chưa có Package nào được BẬT ở Mục [5]!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 status = "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
-                table_data.append([i, status, acc['username'], acc['package']])
+                print(f" [{i}] {status:<9} | User: {acc['username']:<15} | App: {acc['package']}")
 
-        print(tabulate(table_data, headers=["STT", "Trạng thái", "Roblox Username", "Package App"], tablefmt="rounded_grid"))
-        print("\n[1-N] Đổi Bật/Tắt trạng thái Client | [0] Quay lại")
+        print("-" * 50)
+        print(" [1-N] Nhập số để Bật/Tắt trạng thái Client")
+        print(" [0]   Quay lại Menu chính")
+        print("=" * 50)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -365,17 +372,20 @@ def set_username_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
-        print("=== ĐỔI TÊN PLAYER (ROBLOX USERNAME) ===")
+        print("=" * 50)
+        print("          ĐỔI TÊN PLAYER (USERNAME)")
+        print("=" * 50)
 
-        table_data = []
         if not active_pkgs:
-            table_data.append(["-", "Hãy BẬT Package ở Mục [5] trước khi đổi tên!", "-"])
+            print(" [!] Hãy BẬT Package ở Mục [5] trước khi đổi tên!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                table_data.append([i, acc['username'], acc['package']])
+                print(f" [{i}] User: {acc['username']:<15} | App: {acc['package']}")
 
-        print(tabulate(table_data, headers=["STT", "Username Hiện Tại", "Package App"], tablefmt="rounded_grid"))
-        print("\n[1-N] Chọn Client để đổi tên Player | [0] Quay lại")
+        print("-" * 50)
+        print(" [1-N] Chọn Client để đổi tên Player tương ứng")
+        print(" [0]   Quay lại Menu chính")
+        print("=" * 50)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -389,7 +399,7 @@ def set_username_menu():
             if 0 <= idx < len(active_pkgs):
                 acc = active_pkgs[idx]
                 old_name = acc["username"]
-                new_name = prompt(f"Nhập Username mới cho [{acc['package']}] (Cũ: {old_name}): ").strip()
+                new_name = prompt(f"\nNhập Username mới cho [{acc['package']}] (Cũ: {old_name}): ").strip()
                 if new_name:
                     acc["username"] = new_name
                     save_accounts(ACCOUNTS)
@@ -401,19 +411,23 @@ def config_server_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
-        print("=== CẤU HÌNH GAME & SERVER CLIENT ===")
+        print("=" * 50)
+        print("       CẤU HÌNH GAME & SERVER CLIENT")
+        print("=" * 50)
 
-        table_data = []
         if not active_pkgs:
-            table_data.append(["-", "Hãy BẬT Package ở Mục [5] trước khi cài đặt!", "-", "-"])
+            print(" [!] Hãy BẬT Package ở Mục [5] trước khi cài đặt!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 link_display = acc.get("vip_link", "").strip() or "[Public Server]"
-                if len(link_display) > 25: link_display = link_display[:22] + "..."
-                table_data.append([i, acc['username'], str(acc.get('place_id', 1537690962)), link_display])
+                if len(link_display) > 20: link_display = link_display[:17] + "..."
+                print(f" [{i}] {acc['username']:<15} | PlaceID: {acc.get('place_id', 1537690962)} | {link_display}")
 
-        print(tabulate(table_data, headers=["STT", "Username", "Place ID", "Link VIP / Server"], tablefmt="rounded_grid"))
-        print("\n[99] Cài cho TẤT CẢ Client | [1-N] Chọn riêng Client | [0] Quay lại")
+        print("-" * 50)
+        print(" [99]  Cài đặt cho TẤT CẢ Client đang mở")
+        print(" [1-N] Chọn riêng từng Client để cài đặt")
+        print(" [0]   Quay lại Menu chính")
+        print("=" * 50)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -423,7 +437,7 @@ def config_server_menu():
         if choice == "0":
             break
         elif choice == "99" and active_pkgs:
-            inp = prompt("Nhập PlaceID HOẶC Link Server VIP: ").strip()
+            inp = prompt("\nNhập PlaceID HOẶC Link Server VIP: ").strip()
             for acc in active_pkgs:
                 if inp.isdigit(): acc["place_id"] = int(inp)
                 else: acc["vip_link"] = inp
@@ -434,7 +448,7 @@ def config_server_menu():
             idx = int(choice) - 1
             if 0 <= idx < len(active_pkgs):
                 target_acc = active_pkgs[idx]
-                inp = prompt(f"Nhập PlaceID HOẶC Link VIP cho [{target_acc['username']}]: ").strip()
+                inp = prompt(f"\nNhập PlaceID HOẶC Link VIP cho [{target_acc['username']}]: ").strip()
                 if inp.isdigit(): target_acc["place_id"] = int(inp)
                 else: target_acc["vip_link"] = inp
                 save_accounts(ACCOUNTS)
@@ -497,15 +511,19 @@ def run_manager():
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            print("==========================================================")
-            print(f" TIME: {now_str} | CPU: {cpu_p:.1f}% | RAM: {used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)")
-            print("==========================================================")
+            print("=" * 60)
+            print(f" TERMUX REJOIN MONITOR | TIME: {now_str}")
+            print(f" CPU: {cpu_p:.1f}%  |  RAM: {used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)")
+            print("=" * 60)
+            print(f" {'USER':<16} | {'APP':<12} | {'STATUS'}")
+            print("-" * 60)
 
-            table_data = []
             for acc in runnable_accounts:
                 user = acc["username"]
                 pkg = acc["package"]
-                disp_pkg = pkg.replace("free.", "")
+
+                disp_user = user[:15] if len(user) > 15 else user
+                disp_pkg = pkg.replace("free.", "")[:11] if len(pkg) > 11 else pkg
 
                 with ping_lock:
                     u_last_ping = last_ping.get(user, 0)
@@ -517,9 +535,9 @@ def run_manager():
                 else:
                     status_str = f"TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
-                table_data.append([user, disp_pkg, status_str])
+                print(f" {disp_user:<16} | {disp_pkg:<12} | {status_str}")
 
-            print(tabulate(table_data, headers=["PLAYER USERNAME", "PACKAGE / APP", "TRẠNG THÁI"], tablefmt="rounded_grid"))
+            print("=" * 60)
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -546,22 +564,28 @@ def run_manager():
 if __name__ == "__main__":
     check_root_permission()
 
+    menu_table = [
+        ("1", "Cài đặt Game & Link Server Client"),
+        ("2", "Quản lý Client (Bật/Tắt trạng thái)"),
+        ("3", "Đổi Tên Player (Roblox Username)"),
+        ("4", "Bắt đầu chạy kịch bản Rejoin"),
+        ("5", "Quản lý Package trên máy (Bật/Tắt App)"),
+        ("0", "Thoát chương trình")
+    ]
+
     while True:
         clear_screen()
-        
-        menu_table = [
-            ["1", "Cài đặt Game & Link Server Client"],
-            ["2", "Quản lý Client (Bật/Tắt trạng thái)"],
-            ["3", "Đổi Tên Player (Roblox Username)"],
-            ["4", "Bắt đầu chạy kịch bản Rejoin"],
-            ["5", "Quản lý Package trên máy (Bật/Tắt App)"],
-            ["0", "Thoát chương trình"]
-        ]
+        print("=" * 50)
+        print("              TERMUX REJOIN MANAGER")
+        print("=" * 50)
 
-        print(tabulate(menu_table, headers=["Mục", "Chức năng quản lý"], tablefmt="rounded_grid"))
+        for key, text in menu_table:
+            print(f" [{key}] {text}")
+
+        print("=" * 50)
 
         try:
-            choice = prompt("\nLựa chọn (0-5): ").strip()
+            choice = prompt("Lựa chọn (0-5): ").strip()
         except (KeyboardInterrupt, EOFError):
             sys.exit(0)
 
