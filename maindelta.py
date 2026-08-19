@@ -10,6 +10,31 @@ import urllib.parse
 from prompt_toolkit import prompt
 
 # ==============================================================================
+# HÀM ĐIỀU KHIỂN XOAY MÀN HÌNH (LANDSCAPE / PORTRAIT)
+# ==============================================================================
+def set_screen_orientation(orientation="landscape"):
+    """
+    orientation:
+      - 'landscape': Ép màn hình quay ngang
+      - 'portrait' : Ép màn hình quay dọc
+      - 'auto'     : Bật lại chế độ xoay tự động mặc định của máy
+    """
+    try:
+        if orientation == "landscape":
+            # Tắt tự động xoay -> Ép về chế độ xoay ngang (User Rotation = 1)
+            subprocess.run('su -c "settings put system accelerometer_rotation 0"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run('su -c "settings put system user_rotation 1"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif orientation == "portrait":
+            # Tắt tự động xoay -> Ép về chế độ xoay dọc (User Rotation = 0)
+            subprocess.run('su -c "settings put system accelerometer_rotation 0"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run('su -c "settings put system user_rotation 0"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif orientation == "auto":
+            # Bật lại chế độ xoay tự động
+            subprocess.run('su -c "settings put system accelerometer_rotation 1"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        pass
+
+# ==============================================================================
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
 # ==============================================================================
 PORT = 9999
@@ -296,9 +321,9 @@ def manage_packages_menu():
     sync_packages()
     while True:
         clear_screen()
-        print("=" * 50)
-        print("      QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY")
-        print("=" * 50)
+        print("=" * 60)
+        print("            QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY")
+        print("=" * 60)
         
         if not ACCOUNTS:
             print(" [!] Không tìm thấy Package Roblox/Noka nào!")
@@ -307,12 +332,12 @@ def manage_packages_menu():
                 status = "[ON] " if acc.get("pkg_enabled", True) else "[OFF]"
                 print(f" [{i}] {status} | App: {acc['package']}")
 
-        print("-" * 50)
+        print("-" * 60)
         print(" [1-N] Nhập số để BẬT/TẮT Package tương ứng")
         print(" [88]  BẬT TẤT CẢ PACKAGE")
         print(" [99]  TẮT TẤT CẢ PACKAGE")
         print(" [0]   Quay lại Menu chính")
-        print("=" * 50)
+        print("=" * 60)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -338,21 +363,21 @@ def manage_clients_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
-        print("=" * 50)
-        print("    DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)")
-        print("=" * 50)
+        print("=" * 60)
+        print("          DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)")
+        print("=" * 60)
 
         if not active_pkgs:
             print(" [!] Chưa có Package nào được BẬT ở Mục [5]!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 status = "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
-                print(f" [{i}] {status:<9} | User: {acc['username']:<15} | App: {acc['package']}")
+                print(f" [{i}] {status:<9} | User: {acc['username']:<18} | App: {acc['package']}")
 
-        print("-" * 50)
+        print("-" * 60)
         print(" [1-N] Nhập số để Bật/Tắt trạng thái Client")
         print(" [0]   Quay lại Menu chính")
-        print("=" * 50)
+        print("=" * 60)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -372,20 +397,20 @@ def set_username_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
-        print("=" * 50)
-        print("          ĐỔI TÊN PLAYER (USERNAME)")
-        print("=" * 50)
+        print("=" * 60)
+        print("                ĐỔI TÊN PLAYER (USERNAME)")
+        print("=" * 60)
 
         if not active_pkgs:
             print(" [!] Hãy BẬT Package ở Mục [5] trước khi đổi tên!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                print(f" [{i}] User: {acc['username']:<15} | App: {acc['package']}")
+                print(f" [{i}] User: {acc['username']:<18} | App: {acc['package']}")
 
-        print("-" * 50)
+        print("-" * 60)
         print(" [1-N] Chọn Client để đổi tên Player tương ứng")
         print(" [0]   Quay lại Menu chính")
-        print("=" * 50)
+        print("=" * 60)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -411,23 +436,23 @@ def config_server_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
-        print("=" * 50)
-        print("       CẤU HÌNH GAME & SERVER CLIENT")
-        print("=" * 50)
+        print("=" * 60)
+        print("             CẤU HÌNH GAME & SERVER CLIENT")
+        print("=" * 60)
 
         if not active_pkgs:
             print(" [!] Hãy BẬT Package ở Mục [5] trước khi cài đặt!")
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 link_display = acc.get("vip_link", "").strip() or "[Public Server]"
-                if len(link_display) > 20: link_display = link_display[:17] + "..."
+                if len(link_display) > 25: link_display = link_display[:22] + "..."
                 print(f" [{i}] {acc['username']:<15} | PlaceID: {acc.get('place_id', 1537690962)} | {link_display}")
 
-        print("-" * 50)
+        print("-" * 60)
         print(" [99]  Cài đặt cho TẤT CẢ Client đang mở")
         print(" [1-N] Chọn riêng từng Client để cài đặt")
         print(" [0]   Quay lại Menu chính")
-        print("=" * 50)
+        print("=" * 60)
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -511,19 +536,19 @@ def run_manager():
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            print("=" * 60)
+            print("=" * 65)
             print(f" TERMUX REJOIN MONITOR | TIME: {now_str}")
             print(f" CPU: {cpu_p:.1f}%  |  RAM: {used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)")
-            print("=" * 60)
-            print(f" {'USER':<16} | {'APP':<12} | {'STATUS'}")
-            print("-" * 60)
+            print("=" * 65)
+            print(f" {'USER':<18} | {'APP':<15} | {'STATUS'}")
+            print("-" * 65)
 
             for acc in runnable_accounts:
                 user = acc["username"]
                 pkg = acc["package"]
 
-                disp_user = user[:15] if len(user) > 15 else user
-                disp_pkg = pkg.replace("free.", "")[:11] if len(pkg) > 11 else pkg
+                disp_user = user[:17] if len(user) > 17 else user
+                disp_pkg = pkg.replace("free.", "")[:14] if len(pkg) > 14 else pkg
 
                 with ping_lock:
                     u_last_ping = last_ping.get(user, 0)
@@ -535,9 +560,9 @@ def run_manager():
                 else:
                     status_str = f"TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
-                print(f" {disp_user:<16} | {disp_pkg:<12} | {status_str}")
+                print(f" {disp_user:<18} | {disp_pkg:<15} | {status_str}")
 
-            print("=" * 60)
+            print("=" * 65)
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -555,6 +580,8 @@ def run_manager():
     finally:
         server.shutdown()
         server.server_close()
+        # Bật lại xoay tự động khi thoát
+        set_screen_orientation("auto")
         sys.exit(0)
 
 
@@ -563,6 +590,9 @@ def run_manager():
 # ==============================================================================
 if __name__ == "__main__":
     check_root_permission()
+
+    # THÊM LỆNH XOAY NGANG MÀN HÌNH NGAY KHI CHẠY SCRIPT
+    set_screen_orientation("landscape")
 
     menu_table = [
         ("1", "Cài đặt Game & Link Server Client"),
@@ -575,18 +605,19 @@ if __name__ == "__main__":
 
     while True:
         clear_screen()
-        print("=" * 50)
-        print("              TERMUX REJOIN MANAGER")
-        print("=" * 50)
+        print("=" * 60)
+        print("                TERMUX REJOIN MANAGER")
+        print("=" * 60)
 
         for key, text in menu_table:
             print(f" [{key}] {text}")
 
-        print("=" * 50)
+        print("=" * 60)
 
         try:
             choice = prompt("Lựa chọn (0-5): ").strip()
         except (KeyboardInterrupt, EOFError):
+            set_screen_orientation("auto")
             sys.exit(0)
 
         if choice == "1": config_server_menu()
@@ -599,4 +630,6 @@ if __name__ == "__main__":
         elif choice == "5": manage_packages_menu()
         elif choice == "0":
             print("Đã thoát chương trình.")
+            # Bật lại xoay tự động khi thoát
+            set_screen_orientation("auto")
             sys.exit(0)
