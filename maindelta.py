@@ -7,14 +7,8 @@ import sys
 import threading
 import time
 import urllib.parse
-
 from prompt_toolkit import prompt
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-
-# Khởi tạo Console của Rich
-console = Console()
+from tabulate import tabulate
 
 # ==============================================================================
 # PHẦN 1: CẤU HÌNH HỆ THỐNG & KIỂM TRA ROOT
@@ -41,10 +35,10 @@ def check_root_permission():
             timeout=5,
         )
         if res.returncode != 0 or "uid=0(root)" not in res.stdout:
-            console.print("[bold red][X] LỖI: Thiết bị chưa được ROOT hoặc chưa cấp quyền SU cho Termux![/bold red]")
+            print("[X] LỖI: Thiết bị chưa được ROOT hoặc chưa cấp quyền SU cho Termux!")
             sys.exit(1)
     except Exception as e:
-        console.print(f"[bold red][X] Không thể kiểm tra quyền ROOT: {e}[/bold red]")
+        print(f"[X] Không thể kiểm tra quyền ROOT: {e}")
         sys.exit(1)
 
 
@@ -150,7 +144,7 @@ def save_accounts(data):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except OSError as e:
-        console.print(f"[bold red][X] Lỗi khi lưu file: {e}[/bold red]")
+        print(f"[X] Lỗi khi lưu file: {e}")
 
 
 ACCOUNTS = load_accounts()
@@ -227,7 +221,7 @@ def restart_account(acc):
     vip_link = acc.get("vip_link", "")
 
     now_str = time.strftime("%H:%M:%S")
-    console.print(f"[bold cyan][{now_str}][/bold cyan] Launching: [bold yellow]{username}[/bold yellow] ({pkg})...")
+    print(f"[{now_str}] Launching: {username} ({pkg})...")
 
     safe_kill_cmd = rf'su -c "am force-stop {pkg}; kill -9 \$(pgrep -f {pkg})"'
     subprocess.run(safe_kill_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -251,7 +245,7 @@ def restart_account(acc):
             monkey_cmd = f'su -c "monkey -p {pkg} -c android.intent.category.LAUNCHER 1"'
             subprocess.run(monkey_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
-        console.print(f"[bold green]OK [{pkg}] Launched![/bold green]")
+        print(f"OK [{pkg}] Launched!")
 
     with ping_lock:
         last_ping[username] = time.time()
@@ -297,26 +291,24 @@ def check_file_pings():
 
 
 # ==============================================================================
-# GIAO DIỆN RICH TABLES & SUB-MENUS
+# GIAO DIỆN TABULATE & SUB-MENUS
 # ==============================================================================
 def manage_packages_menu():
     sync_packages()
     while True:
         clear_screen()
-        table = Table(title="[bold green]QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY[/bold green]", expand=True)
-        table.add_column("STT", justify="center", style="cyan", width=6)
-        table.add_column("Trạng thái", justify="center", width=12)
-        table.add_column("Tên Package / App", style="magenta")
-
+        print("=== QUẢN LÝ PACKAGE ROBLOX CÓ TRÊN MÁY ===")
+        
+        table_data = []
         if not ACCOUNTS:
-            table.add_row("-", "Trống", "Không tìm thấy Package Roblox/Noka nào!")
+            table_data.append(["-", "Trống", "Không tìm thấy Package Roblox/Noka nào!"])
         else:
             for i, acc in enumerate(ACCOUNTS, 1):
-                status = "[bold green][ON] BẬT[/bold green]" if acc.get("pkg_enabled", True) else "[bold red][OFF] TẮT[/bold red]"
-                table.add_row(str(i), status, acc['package'])
+                status = "[ON] BẬT" if acc.get("pkg_enabled", True) else "[OFF] TẮT"
+                table_data.append([i, status, acc['package']])
 
-        console.print(table)
-        console.print("\n[yellow][1-N][/yellow] Bật/Tắt Package | [yellow][88][/yellow] Bật tất cả | [yellow][99][/yellow] Tắt tất cả | [yellow][0][/yellow] Quay lại")
+        print(tabulate(table_data, headers=["STT", "Trạng thái", "Package / App"], tablefmt="rounded_grid"))
+        print("\n[1-N] Bật/Tắt Package | [88] Bật tất cả | [99] Tắt tất cả | [0] Quay lại")
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -342,22 +334,18 @@ def manage_clients_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
+        print("=== DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON) ===")
 
-        table = Table(title="[bold green]DANH SÁCH CLIENT (PACKAGE ĐÃ CHỌN ON)[/bold green]", expand=True)
-        table.add_column("STT", justify="center", style="cyan", width=6)
-        table.add_column("Trạng thái", justify="center", width=14)
-        table.add_column("Roblox Username", style="yellow")
-        table.add_column("Package App", style="magenta")
-
+        table_data = []
         if not active_pkgs:
-            table.add_row("-", "Trống", "Chưa có Package nào được BẬT ở Mục [5]!", "-")
+            table_data.append(["-", "Trống", "Chưa có Package nào được BẬT ở Mục [5]!", "-"])
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                status = "[bold green][RUNNING][/bold green]" if acc.get("client_enabled", True) else "[bold red][STOPPED][/bold red]"
-                table.add_row(str(i), status, acc['username'], acc['package'])
+                status = "[RUNNING]" if acc.get("client_enabled", True) else "[STOPPED]"
+                table_data.append([i, status, acc['username'], acc['package']])
 
-        console.print(table)
-        console.print("\n[yellow][1-N][/yellow] Đổi Bật/Tắt trạng thái Client | [yellow][0][/yellow] Quay lại")
+        print(tabulate(table_data, headers=["STT", "Trạng thái", "Roblox Username", "Package App"], tablefmt="rounded_grid"))
+        print("\n[1-N] Đổi Bật/Tắt trạng thái Client | [0] Quay lại")
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -377,20 +365,17 @@ def set_username_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
+        print("=== ĐỔI TÊN PLAYER (ROBLOX USERNAME) ===")
 
-        table = Table(title="[bold green]ĐỔI TÊN PLAYER (ROBLOX USERNAME)[/bold green]", expand=True)
-        table.add_column("STT", justify="center", style="cyan", width=6)
-        table.add_column("Username Hiện Tại", style="yellow")
-        table.add_column("Package App", style="magenta")
-
+        table_data = []
         if not active_pkgs:
-            table.add_row("-", "Hãy BẬT Package ở Mục [5] trước khi đổi tên!", "-")
+            table_data.append(["-", "Hãy BẬT Package ở Mục [5] trước khi đổi tên!", "-"])
         else:
             for i, acc in enumerate(active_pkgs, 1):
-                table.add_row(str(i), acc['username'], acc['package'])
+                table_data.append([i, acc['username'], acc['package']])
 
-        console.print(table)
-        console.print("\n[yellow][1-N][/yellow] Chọn Client để đổi tên Player | [yellow][0][/yellow] Quay lại")
+        print(tabulate(table_data, headers=["STT", "Username Hiện Tại", "Package App"], tablefmt="rounded_grid"))
+        print("\n[1-N] Chọn Client để đổi tên Player | [0] Quay lại")
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -408,7 +393,7 @@ def set_username_menu():
                 if new_name:
                     acc["username"] = new_name
                     save_accounts(ACCOUNTS)
-                    console.print(f"[bold green][+] Đã đổi tên thành công: [{new_name}][/bold green]")
+                    print(f"[+] Đã đổi tên thành công: [{new_name}]")
                     time.sleep(1)
 
 
@@ -416,23 +401,19 @@ def config_server_menu():
     while True:
         active_pkgs = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True)]
         clear_screen()
+        print("=== CẤU HÌNH GAME & SERVER CLIENT ===")
 
-        table = Table(title="[bold green]CẤU HÌNH GAME & SERVER CLIENT[/bold green]", expand=True)
-        table.add_column("STT", justify="center", style="cyan", width=6)
-        table.add_column("Username", style="yellow")
-        table.add_column("Place ID", justify="center", style="blue")
-        table.add_column("Link VIP / Server", style="green")
-
+        table_data = []
         if not active_pkgs:
-            table.add_row("-", "Hãy BẬT Package ở Mục [5] trước khi cài đặt!", "-", "-")
+            table_data.append(["-", "Hãy BẬT Package ở Mục [5] trước khi cài đặt!", "-", "-"])
         else:
             for i, acc in enumerate(active_pkgs, 1):
                 link_display = acc.get("vip_link", "").strip() or "[Public Server]"
                 if len(link_display) > 25: link_display = link_display[:22] + "..."
-                table.add_row(str(i), acc['username'], str(acc.get('place_id', 1537690962)), link_display)
+                table_data.append([i, acc['username'], str(acc.get('place_id', 1537690962)), link_display])
 
-        console.print(table)
-        console.print("\n[yellow][99][/yellow] Cài cho TẤT CẢ Client | [yellow][1-N][/yellow] Chọn riêng Client | [yellow][0][/yellow] Quay lại")
+        print(tabulate(table_data, headers=["STT", "Username", "Place ID", "Link VIP / Server"], tablefmt="rounded_grid"))
+        print("\n[99] Cài cho TẤT CẢ Client | [1-N] Chọn riêng Client | [0] Quay lại")
 
         try:
             choice = prompt("Lựa chọn: ").strip()
@@ -447,7 +428,7 @@ def config_server_menu():
                 if inp.isdigit(): acc["place_id"] = int(inp)
                 else: acc["vip_link"] = inp
             save_accounts(ACCOUNTS)
-            console.print("[bold green][+] Cập nhật thành công![/bold green]")
+            print("[+] Cập nhật thành công!")
             time.sleep(1)
         elif choice.isdigit():
             idx = int(choice) - 1
@@ -457,7 +438,7 @@ def config_server_menu():
                 if inp.isdigit(): target_acc["place_id"] = int(inp)
                 else: target_acc["vip_link"] = inp
                 save_accounts(ACCOUNTS)
-                console.print("[bold green][+] Cập nhật thành công![/bold green]")
+                print("[+] Cập nhật thành công!")
                 time.sleep(1)
 
 
@@ -494,8 +475,8 @@ def run_manager():
     runnable_accounts = [acc for acc in ACCOUNTS if acc.get("pkg_enabled", True) and acc.get("client_enabled", True)]
 
     if not runnable_accounts:
-        console.print("\n[bold red][!] Không có Client nào đủ điều kiện chạy![/bold red]")
-        console.print("[bold yellow][!] Hãy kiểm tra lại Mục [5] và Mục [2].[/bold yellow]")
+        print("\n[!] Không có Client nào đủ điều kiện chạy!")
+        print("[!] Hãy kiểm tra lại Mục [5] và Mục [2].")
         prompt("\nNhấn Enter để quay lại Menu...")
         return
 
@@ -503,7 +484,7 @@ def run_manager():
     server.timeout = 1.0
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    console.print("\n[bold green][+] Đang khởi chạy danh sách app...[/bold green]")
+    print("\n[+] Đang khởi chạy danh sách app...")
     for acc in runnable_accounts:
         restart_account(acc)
         time.sleep(LAUNCH_INTERVAL)
@@ -516,16 +497,11 @@ def run_manager():
             clear_screen()
             now_str = time.strftime("%H:%M:%S")
 
-            # Bảng thông tin hệ thống
-            sys_info = f"TIME: [bold cyan]{now_str}[/bold cyan]  |  CPU: [bold green]{cpu_p:.1f}%[/bold green]  |  RAM: [bold yellow]{used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)[/bold yellow]"
-            console.print(Panel(sys_info, title="[bold magenta]TERMUX REJOIN AUTOMATION MONITOR[/bold magenta]", expand=True))
+            print("==========================================================")
+            print(f" TIME: {now_str} | CPU: {cpu_p:.1f}% | RAM: {used_gb:.2f}GB / {total_gb:.2f}GB ({ram_p:.1f}%)")
+            print("==========================================================")
 
-            # Bảng theo dõi trạng thái các Client
-            table = Table(expand=True)
-            table.add_column("PLAYER USERNAME", style="yellow")
-            table.add_column("PACKAGE / APP", style="magenta")
-            table.add_column("TRẠNG THÁI (STATUS)", justify="center")
-
+            table_data = []
             for acc in runnable_accounts:
                 user = acc["username"]
                 pkg = acc["package"]
@@ -537,13 +513,13 @@ def run_manager():
 
                 diff = int(current_time - u_last_ping)
                 if u_has_pinged and diff <= MAX_NO_PING:
-                    status_str = f"[bold green]ONLINE ({diff}s ago)[/bold green]"
+                    status_str = f"ONLINE ({diff}s ago)"
                 else:
-                    status_str = f"[bold red]TIMEOUT ({diff}s/{MAX_NO_PING}s)[/bold red]"
+                    status_str = f"TIMEOUT ({diff}s/{MAX_NO_PING}s)"
 
-                table.add_row(user, disp_pkg, status_str)
+                table_data.append([user, disp_pkg, status_str])
 
-            console.print(table)
+            print(tabulate(table_data, headers=["PLAYER USERNAME", "PACKAGE / APP", "TRẠNG THÁI"], tablefmt="rounded_grid"))
 
             for acc in runnable_accounts:
                 user = acc["username"]
@@ -557,7 +533,7 @@ def run_manager():
             time.sleep(3)
 
     except KeyboardInterrupt:
-        console.print("\n[bold red][!] Đã dừng chương trình.[/bold red]")
+        print("\n[!] Đã dừng chương trình.")
     finally:
         server.shutdown()
         server.server_close()
@@ -572,18 +548,17 @@ if __name__ == "__main__":
 
     while True:
         clear_screen()
-        table = Table(title="[bold cyan]TERMUX REJOIN AUTOMATION MENU[/bold cyan]", show_header=True, header_style="bold magenta", expand=True)
-        table.add_column("Mục", justify="center", style="bold yellow", width=8)
-        table.add_column("Chức năng quản lý", style="bold white")
+        
+        menu_table = [
+            ["1", "Cài đặt Game & Link Server Client"],
+            ["2", "Quản lý Client (Bật/Tắt trạng thái)"],
+            ["3", "Đổi Tên Player (Roblox Username)"],
+            ["4", "Bắt đầu chạy kịch bản Rejoin"],
+            ["5", "Quản lý Package trên máy (Bật/Tắt App)"],
+            ["0", "Thoát chương trình"]
+        ]
 
-        table.add_row("1", "Cài đặt Game & Link Server Client")
-        table.add_row("2", "Quản lý Client (Bật/Tắt trạng thái)")
-        table.add_row("3", "Đổi Tên Player (Roblox Username)")
-        table.add_row("4", "Bắt đầu chạy kịch bản Rejoin")
-        table.add_row("5", "Quản lý Package trên máy (Bật/Tắt App)")
-        table.add_row("0", "Thoát chương trình")
-
-        console.print(table)
+        print(tabulate(menu_table, headers=["Mục", "Chức năng quản lý"], tablefmt="rounded_grid"))
 
         try:
             choice = prompt("\nLựa chọn (0-5): ").strip()
@@ -599,5 +574,5 @@ if __name__ == "__main__":
             break
         elif choice == "5": manage_packages_menu()
         elif choice == "0":
-            console.print("[bold red]Đã thoát chương trình.[/bold red]")
+            print("Đã thoát chương trình.")
             sys.exit(0)
