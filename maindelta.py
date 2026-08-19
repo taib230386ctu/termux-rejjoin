@@ -31,7 +31,7 @@ def set_screen_orientation(orientation="landscape"):
         elif orientation == "auto":
             # Bật lại chế độ xoay tự động
             subprocess.run('su -c "settings put system accelerometer_rotation 1"', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
+    except Exception:
         pass
 
 # ==============================================================================
@@ -67,6 +67,8 @@ def check_root_permission():
 
 
 def clear_screen():
+    # FIX LỖI BẬC THANG: Ép Termux nhận diện lại đúng kích thước cột/dòng sau khi xoay ngang
+    os.system("stty sane 2>/dev/null || true")
     os.system("clear")
 
 
