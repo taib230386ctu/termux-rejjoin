@@ -7,10 +7,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
-local StatCache = require(ReplicatedStorage:WaitForChild("ClientStatCache", 5))
-
--- Remote Event dùng để cho Ong ăn Treat trong Bee Swarm Simulator
-local ConstructHiveEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("ConstructHiveEvent")
 
 -- Bảng tính tổng lượng Bond (Kinh nghiệm) cần thiết từ Level 1 đến Level 25
 local BOND_REQUIREMENTS = {
@@ -41,10 +37,25 @@ local BOND_REQUIREMENTS = {
     [25] = 50000000000000000
 }
 
+-- Safe Module Fetch
+local function getStatCache()
+    local clientStatCache = ReplicatedStorage:FindFirstChild("ClientStatCache")
+    if clientStatCache then
+        local success, result = pcall(require, clientStatCache)
+        if success then return result end
+    end
+    return nil
+end
+
 -- =================================================================
 -- 1. HÀM QUÉT SÂU BÙA MOON AMULET
 -- =================================================================
 local function getAtlasMoonTreatBonus()
+    local StatCache = getStatCache()
+    if not StatCache then
+        return false, 0, "Không tìm thấy ClientStatCache"
+    end
+
     local s, myData = pcall(function() return StatCache:Get() end)
     if not s or type(myData) ~= "table" then
         return false, 0, "Không đọc được StatCache"
@@ -273,6 +284,12 @@ local function scanHiveAndRender()
         end
     end
 
+    local StatCache = getStatCache()
+    if not StatCache then
+        LogLabel.Text = "❌ Không tìm thấy ClientStatCache!"
+        return
+    end
+
     local s, myData = pcall(function() return StatCache:Get() end)
     if not s or type(myData) ~= "table" or not myData.Bees then
         LogLabel.Text = "❌ Không tìm thấy dữ liệu Bees trong StatCache!"
@@ -343,16 +360,21 @@ local function scanHiveAndRender()
 
             -- Gửi Remote Event tới Server để nâng cấp Ong
             task.spawn(function()
-                ConstructHiveEvent:FireServer("Feed", treatsNeeded, "Treat", slotIndex)
-                task.wait(1)
-                scanHiveAndRender()
-                LogLabel.Text = string.format("✅ Đã gửi Remote nâng Level thành công cho [%s]!", beeName)
+                local ConstructHiveEvent = ReplicatedStorage:FindFirstChild("Events") and ReplicatedStorage.Events:FindFirstChild("ConstructHiveEvent")
+                if ConstructHiveEvent then
+                    ConstructHiveEvent:FireServer("Feed", treatsNeeded, "Treat", slotIndex)
+                    task.wait(1)
+                    scanHiveAndRender()
+                    LogLabel.Text = string.format("✅ Đã gửi Remote nâng Level thành công cho [%s]!", beeName)
+                else
+                    LogLabel.Text = "❌ Không tìm thấy ConstructHiveEvent!"
+                end
             end)
         end)
     end
 
     ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, beeCount * 40)
-    LogLabel.Text = string.format(" Quét thành công %d chú ong. Treat hiện có: %d", beeCount, totalTreatsInInventory)
+    LogLabel.Text = string.format("Quét thành công %d chú ong. Treat hiện có: %d", beeCount, totalTreatsInInventory)
 end
 
 -- Lắng nghe sự kiện Nút Bấm
