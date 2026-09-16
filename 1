@@ -31,8 +31,9 @@ local StepBondForLvl = {
 
 local selectedCol, selectedRow = nil, nil
 local isAutoLevelRunning = false
+local isMinimized = false
 
--- ==================== HÀM HỖ TRỢ (UTILITIES) ====================
+-- ==================== HÀM HỖ TRỢ ====================
 local function formatNumber(n)
     if not n then return "0" end
     local formatted = tostring(math.floor(n))
@@ -160,7 +161,6 @@ local function getParsedHoneycomb()
     return parsed
 end
 
--- Tính toán số Treat để đưa 1 con từ Lv hiện tại lên Lv mục tiêu
 local function getTreatsNeededToTarget(bee, targetLvl)
     if bee.Lvl >= targetLvl then return 0 end
     local targetTotalBond = CumulativeBondToReachLvl[targetLvl]
@@ -169,10 +169,10 @@ local function getTreatsNeededToTarget(bee, targetLvl)
     local neededBond = targetTotalBond - bee.TotalBond
     if neededBond <= 0 then return 0 end
     
-    return math.ceil(neededBond / 10) -- 1 Treat = 10 Bond
+    return math.ceil(neededBond / 10)
 end
 
--- ==================== GIAO DIỆN UI TỔNG HỢP ====================
+-- ==================== GIAO DIỆN UI ====================
 if CoreGui:FindFirstChild("BSS_TabbedManagerUI") then
     CoreGui.BSS_TabbedManagerUI:Destroy()
 end
@@ -190,6 +190,7 @@ MainFrame.Position = UDim2.new(0.5, -290, 0.5, -210)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
 MainFrame.Active = true
 MainFrame.Draggable = true
+MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
 
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
@@ -204,7 +205,7 @@ Header.BackgroundTransparency = 1
 Header.Parent = MainFrame
 
 local HeaderTitle = Instance.new("TextLabel")
-HeaderTitle.Size = UDim2.new(0, 220, 1, 0)
+HeaderTitle.Size = UDim2.new(0, 180, 1, 0)
 HeaderTitle.Position = UDim2.new(0, 10, 0, 0)
 HeaderTitle.Text = "🐝 Bee Swarm Manager"
 HeaderTitle.TextColor3 = Color3.fromRGB(255, 205, 50)
@@ -214,6 +215,7 @@ HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
 HeaderTitle.BackgroundTransparency = 1
 HeaderTitle.Parent = Header
 
+-- Control Buttons (Minimize & Close)
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 24, 0, 24)
 CloseBtn.Position = UDim2.new(1, -28, 0, 6)
@@ -226,10 +228,21 @@ CloseBtn.Parent = Header
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 4)
 CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 24, 0, 24)
+MinimizeBtn.Position = UDim2.new(1, -56, 0, 6)
+MinimizeBtn.Text = "—"
+MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+MinimizeBtn.Font = Enum.Font.SourceSansBold
+MinimizeBtn.TextSize = 12
+MinimizeBtn.Parent = Header
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 4)
+
 -- TAB BUTTONS
 local TabContainer = Instance.new("Frame")
-TabContainer.Size = UDim2.new(0, 260, 0, 26)
-TabContainer.Position = UDim2.new(0, 230, 0, 5)
+TabContainer.Size = UDim2.new(0, 240, 0, 26)
+TabContainer.Position = UDim2.new(0, 195, 0, 5)
 TabContainer.BackgroundTransparency = 1
 TabContainer.Parent = Header
 
@@ -257,10 +270,27 @@ Instance.new("UICorner", Tab2Btn).CornerRadius = UDim.new(0, 6)
 
 -- CONTAINER CHO CÁC TAB
 local ContentContainer = Instance.new("Frame")
+ContentContainer.Name = "ContentContainer"
 ContentContainer.Size = UDim2.new(1, -16, 1, -46)
 ContentContainer.Position = UDim2.new(0, 8, 0, 38)
 ContentContainer.BackgroundTransparency = 1
 ContentContainer.Parent = MainFrame
+
+-- Xử lý Thu nhỏ / Mở rộng UI
+MinimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        MainFrame:TweenSize(UDim2.new(0, 250, 0, 36), "Out", "Quad", 0.2, true)
+        ContentContainer.Visible = false
+        TabContainer.Visible = false
+        MinimizeBtn.Text = "▢"
+    else
+        MainFrame:TweenSize(UDim2.new(0, 580, 0, 420), "Out", "Quad", 0.2, true)
+        ContentContainer.Visible = true
+        TabContainer.Visible = true
+        MinimizeBtn.Text = "—"
+    end
+end)
 
 -- ==================== TAB 1: SƠ ĐỒ HIVE ====================
 local Tab1Page = Instance.new("Frame")
@@ -448,7 +478,7 @@ AutoTitle.Parent = AutoBox
 local AutoDesc = Instance.new("TextLabel")
 AutoDesc.Size = UDim2.new(1, -20, 0, 40)
 AutoDesc.Position = UDim2.new(0, 10, 0, 40)
-AutoDesc.Text = "Script sẽ tự động kiểm tra tất cả các con ong trong Tổ. Con nào có Level nhỏ hơn Cấp Mục Tiêu sẽ được tự động cho ăn đủ số Treat để lên Level đó."
+AutoDesc.Text = "Script sẽ tự động quét Hive và cho ăn đủ Treat để đưa từng con ong đạt cấp độ yêu cầu."
 AutoDesc.TextColor3 = Color3.fromRGB(180, 180, 190)
 AutoDesc.Font = Enum.Font.SourceSans
 AutoDesc.TextSize = 11
@@ -458,10 +488,8 @@ AutoDesc.TextYAlignment = Enum.TextYAlignment.Top
 AutoDesc.BackgroundTransparency = 1
 AutoDesc.Parent = AutoBox
 
--- Box Nhập Level Mục Tiêu
-local TargetLvlInput = createMiniInput(AutoBox, "CẤP ĐỘ MỤC TIÊU MỐI ONG (Target Level):", "12", 10, 85, 200)
+local TargetLvlInput = createMiniInput(AutoBox, "CẤP ĐỘ MỤC TIÊU MỖI ONG (Target Level):", "12", 10, 85, 200)
 
--- Nút Chạy Auto Level
 local StartAutoLvlBtn = Instance.new("TextButton")
 StartAutoLvlBtn.Size = UDim2.new(0, 200, 0, 36)
 StartAutoLvlBtn.Position = UDim2.new(0, 10, 0, 135)
@@ -473,7 +501,6 @@ StartAutoLvlBtn.TextSize = 12
 StartAutoLvlBtn.Parent = AutoBox
 Instance.new("UICorner", StartAutoLvlBtn).CornerRadius = UDim.new(0, 6)
 
--- Bảng Tiến Trình Chi Tiết
 local AutoLogFrame = Instance.new("Frame")
 AutoLogFrame.Size = UDim2.new(1, -20, 0, 175)
 AutoLogFrame.Position = UDim2.new(0, 10, 0, 185)
@@ -494,7 +521,7 @@ AutoLogText.TextYAlignment = Enum.TextYAlignment.Top
 AutoLogText.BackgroundTransparency = 1
 AutoLogText.Parent = AutoLogFrame
 
--- ==================== CHUYỂN TAB (TAB SWITCHING) ====================
+-- ==================== CHUYỂN TAB ====================
 Tab1Btn.MouseButton1Click:Connect(function()
     Tab1Page.Visible = true
     Tab2Page.Visible = false
@@ -513,7 +540,7 @@ Tab2Btn.MouseButton1Click:Connect(function()
     Tab1Btn.TextColor3 = Color3.fromRGB(180, 180, 180)
 end)
 
--- ==================== XỬ LÝ RENDER HIVE (TAB 1) ====================
+-- ==================== XỬ LÝ RENDER HIVE ====================
 local liveParsedBees = {}
 
 local function updateBeeDetailUI(col, row)
@@ -633,7 +660,6 @@ local function renderGrid()
     end
 end
 
--- Nút Cho ăn thủ công Tab 1
 FeedBtn.MouseButton1Click:Connect(function()
     local col = tonumber(InputX.Text)
     local row = tonumber(InputY.Text)
@@ -662,14 +688,12 @@ FeedBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
--- ==================== XỬ LÝ AUTO LEVEL (TAB 2) ====================
+-- ==================== XỬ LÝ AUTO LEVEL (CÓ BÁO CÁO SỐ BEE) ====================
 StartAutoLvlBtn.MouseButton1Click:Connect(function()
     if isAutoLevelRunning then
         isAutoLevelRunning = false
         StartAutoLvlBtn.Text = "▶ BẮT ĐẦU CHO ĂN AUTO"
         StartAutoLvlBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 80)
-        AutoLogText.Text = "⏹ Đã dừng tiến trình Auto Level."
-        AutoLogText.TextColor3 = Color3.fromRGB(255, 205, 50)
         return
     end
 
@@ -687,6 +711,9 @@ StartAutoLvlBtn.MouseButton1Click:Connect(function()
     task.spawn(function()
         AutoLogText.TextColor3 = Color3.fromRGB(100, 255, 120)
         
+        local beesLeveledUp = 0
+        local totalTreatsSpent = 0
+
         while isAutoLevelRunning do
             scanHiveVisuals()
             local bees = getParsedHoneycomb()
@@ -701,7 +728,7 @@ StartAutoLvlBtn.MouseButton1Click:Connect(function()
                     local treatsNeeded = getTreatsNeededToTarget(bee, targetLvl)
                     if treatsNeeded > 0 then
                         if myTreats <= 0 then
-                            AutoLogText.Text = "❌ ĐÃ HẾT TREAT! Vui lòng mua thêm Treat để tiếp tục."
+                            AutoLogText.Text = string.format("❌ ĐÃ HẾT TREAT!\n• Đã cho ăn: %d con ong lên Lv.%d\n• Đã dùng: %s Treat.", beesLeveledUp, targetLvl, formatNumber(totalTreatsSpent))
                             AutoLogText.TextColor3 = Color3.fromRGB(255, 80, 80)
                             isAutoLevelRunning = false
                             break
@@ -709,23 +736,33 @@ StartAutoLvlBtn.MouseButton1Click:Connect(function()
 
                         local feedAmount = math.min(treatsNeeded, myTreats)
                         AutoLogText.Text = string.format(
-                            "⏳ [Cột %d, Hàng %d] Ong %s (Lv.%d)\n• Cần: %s Treat để lên Lv.%d\n• Cho ăn: %s Treat...",
-                            bee.Col, bee.Row, bee.Type, bee.Lvl, formatNumber(treatsNeeded), targetLvl, formatNumber(feedAmount)
+                            "⏳ Đang nâng [Cột %d, Hàng %d] Ong %s (Lv.%d ➔ Lv.%d)\n• Đã nâng thành công: %d con ong\n• Đã dùng: %s Treat\n• Đang cho ăn: %s Treat...",
+                            bee.Col, bee.Row, bee.Type, bee.Lvl, targetLvl, beesLeveledUp, formatNumber(totalTreatsSpent), formatNumber(feedAmount)
                         )
 
+                        local initialLvl = bee.Lvl
                         local success = sendFeedRequest(bee.Col, bee.Row, feedAmount)
                         if success then
                             fedAny = true
-                            task.wait(0.5) -- Đợi server cập nhật
+                            totalTreatsSpent = totalTreatsSpent + feedAmount
+                            task.wait(0.5)
+                            
+                            -- Kiểm tra xem con ong đã thực sự lên cấp chưa
+                            local updatedBees = getParsedHoneycomb()
+                            local updatedBee = updatedBees[slotIdx]
+                            if updatedBee and updatedBee.Lvl > initialLvl then
+                                beesLeveledUp = beesLeveledUp + 1
+                            end
+
                             renderGrid()
-                            break -- Cập nhật lại dữ liệu lượt mới
+                            break
                         end
                     end
                 end
             end
 
             if not fedAny and isAutoLevelRunning then
-                AutoLogText.Text = string.format("🎉 HOÀN THÀNH!\nToàn bộ ong trong Hive đã đạt từ Lv.%d trở lên!", targetLvl)
+                AutoLogText.Text = string.format("🎉 HOÀN THÀNH AUTO LEVEL!\n• Tổng cộng: %d con ong đã đạt Lv.%d\n• Tổng Treat đã tiêu tốn: %s Treat.", beesLeveledUp, targetLvl, formatNumber(totalTreatsSpent))
                 AutoLogText.TextColor3 = Color3.fromRGB(100, 255, 120)
                 isAutoLevelRunning = false
                 break
@@ -734,12 +771,17 @@ StartAutoLvlBtn.MouseButton1Click:Connect(function()
             task.wait(0.2)
         end
 
+        if not isAutoLevelRunning and AutoLogText.Text:find("Đang nâng") then
+            AutoLogText.Text = string.format("⏹ ĐÃ DỪNG AUTO LEVEL.\n• Số ong đã nâng level: %d con\n• Tổng Treat đã dùng: %s Treat.", beesLeveledUp, formatNumber(totalTreatsSpent))
+            AutoLogText.TextColor3 = Color3.fromRGB(255, 205, 50)
+        end
+
         StartAutoLvlBtn.Text = "▶ BẮT ĐẦU CHO ĂN AUTO"
         StartAutoLvlBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 80)
     end)
 end)
 
--- ==================== HOẠT ĐỘNG SONG SONG ====================
+-- ==================== VÒNG LẶP ĐỒNG BỘ ====================
 renderGrid()
 
 task.spawn(function()
