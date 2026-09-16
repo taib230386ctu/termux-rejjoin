@@ -1,1130 +1,362 @@
+-- =================================================================
+-- BEE SWARM SIMULATOR: AUTO LEVEL BEE MANAGER & MOON AMULET SCANNER
+-- =================================================================
+
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
+local StatCache = require(ReplicatedStorage:WaitForChild("ClientStatCache", 5))
 
--- Tổng Bond tích lũy từ cấp 1 đến cấp 25 (Cumulative Bond)
-local CumulativeBondToReachLvl = {
+-- Remote Event dùng để cho Ong ăn Treat trong Bee Swarm Simulator
+local ConstructHiveEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("ConstructHiveEvent")
+
+-- Bảng tính tổng lượng Bond (Kinh nghiệm) cần thiết từ Level 1 đến Level 25
+local BOND_REQUIREMENTS = {
     [1] = 0,
     [2] = 10,
-    [3] = 50,
-    [4] = 250,
-    [5] = 1000,
-    [6] = 5000,
-    [7] = 20000,
-    [8] = 80000,
-    [9] = 350000,
-    [10] = 800000,
-    [11] = 2000000,
-    [12] = 4000000,
-    [13] = 8000000,
-    [14] = 15000000,
-    [15] = 30000000,
-    [16] = 150000000,
-    [17] = 600000000,
-    [18] = 2500000000,
-    [19] = 10000000000,
-    [20] = 25000000000,
-    [21] = 500000000000,
-    [22] = 5000000000000,
-    [23] = 100000000000000,
-    [24] = 1000000000000000,
-    [25] = 10000000000000000
+    [3] = 100,
+    [4] = 500,
+    [5] = 2500,
+    [6] = 10000,
+    [7] = 50000,
+    [8] = 250000,
+    [9] = 1000000,
+    [10] = 5000000,
+    [11] = 25000000,
+    [12] = 100000000,
+    [13] = 500000000,
+    [14] = 2500000000,
+    [15] = 10000000000,
+    [16] = 50000000000,
+    [17] = 250000000000,
+    [18] = 1000000000000,
+    [19] = 5000000000000,
+    [20] = 25000000000000,
+    [21] = 100000000000000,
+    [22] = 500000000000000,
+    [23] = 2500000000000000,
+    [24] = 10000000000000000,
+    [25] = 50000000000000000
 }
 
--- Số Bond cần thiết cho từng cấp độ (Step Bond) đúng theo hình ảnh
-local StepBondForLvl = {
-    [1] = 10,
-    [2] = 40,
-    [3] = 200,
-    [4] = 750,
-    [5] = 4000,
-    [6] = 15000,
-    [7] = 60000,
-    [8] = 270000,
-    [9] = 450000,
-    [10] = 1200000,
-    [11] = 2000000,
-    [12] = 4000000,
-    [13] = 7000000,
-    [14] = 15000000,
-    [15] = 120000000,
-    [16] = 450000000,
-    [17] = 1900000000,
-    [18] = 7500000000,
-    [19] = 15000000000,
-    [20] = 475000000000,
-    [21] = 4500000000000,
-    [22] = 95000000000000,
-    [23] = 900000000000000,
-    [24] = 9000000000000000,
-    [25] = 0
-}
-
-local function formatFullNumber(n)
-    if not n then return "0" end
-    local formatted = tostring(math.floor(n))
-    local k
-    while true do
-        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
-        if k == 0 then break end
-    end
-    return formatted
-end
-
-local function formatShortNumber(n)
-    if not n then return "0" end
-    if n >= 1e12 then return string.format("%.2fT", n / 1e12) end
-    if n >= 1e9 then return string.format("%.2fB", n / 1e9) end
-    if n >= 1e6 then return string.format("%.2fM", n / 1e6) end
-    if n >= 1e3 then return string.format("%.1fK", n / 1e3) end
-    return tostring(math.floor(n))
-end
-
--- ==================== WORKSPACE SCANNER ====================
-local function getMyHiveInstance()
-    local hives = Workspace:FindFirstChild("Honeycombs") or Workspace:FindFirstChild("Hives")
-    if not hives then return nil end
-
-    for _, hive in ipairs(hives:GetChildren()) do
-        local owner = hive:FindFirstChild("Owner")
-        if owner and (owner.Value == LocalPlayer or tostring(owner.Value) == LocalPlayer.Name or owner.Value == LocalPlayer.UserId) then
-            return hive
-        end
-    end
-
-    for _, hive in ipairs(hives:GetChildren()) do
-        for _, desc in ipairs(hive:GetDescendants()) do
-            if desc:IsA("TextLabel") and desc.Text == LocalPlayer.Name then
-                return hive
-            end
-        end
-    end
-
-    local char = LocalPlayer.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        local myPos = char.HumanoidRootPart.Position
-        local closest, minDist = nil, 40
-        for _, hive in ipairs(hives:GetChildren()) do
-            local base = hive:FindFirstChild("Platform") or hive:FindFirstChildWhichIsA("BasePart")
-            if base and (base.Position - myPos).Magnitude < minDist then
-                minDist = (base.Position - myPos).Magnitude
-                closest = hive
-            end
-        end
-        if closest then return closest end
-    end
-    return nil
-end
-
-local function parseSlotPosition(slotName)
-    local c, r = string.match(slotName, "(%d+)%s*[,_x-]%s*(%d+)")
-    if c and r then return tonumber(c), tonumber(r) end
-    local index = tonumber(string.match(slotName, "%d+"))
-    if index and index >= 1 and index <= 50 then
-        return ((index - 1) % 5) + 1, math.floor((index - 1) / 5) + 1
-    end
-    return nil, nil
-end
-
-local function extractCellVisual(cell)
-    local imgId = nil
-    local cellColor = nil
-    local isCellGifted = false
-
-    if cell:IsA("BasePart") then cellColor = cell.Color
-    else
-        local p = cell:FindFirstChildWhichIsA("BasePart", true)
-        if p then cellColor = p.Color end
-    end
-    if not cellColor then cellColor = Color3.fromRGB(40, 40, 48) end
-
-    local foundImages = {}
-    for _, desc in ipairs(cell:GetDescendants()) do
-        local lower = desc.Name:lower()
-        if lower:find("gift") or lower:find("star") or lower:find("sparkle") then
-            isCellGifted = true
-        end
-
-        if desc:IsA("Decal") and desc.Texture ~= "" then
-            if lower:find("face") or lower:find("front") or lower:find("bee") then
-                imgId = desc.Texture
-            else
-                table.insert(foundImages, desc.Texture)
-            end
-        elseif desc:IsA("ImageLabel") and desc.Image ~= "" then
-            if lower:find("face") or lower:find("front") or lower:find("bee") then
-                imgId = desc.Image
-            else
-                table.insert(foundImages, desc.Image)
-            end
-        end
-    end
-
-    if not imgId and #foundImages > 0 then
-        imgId = (#foundImages >= 2) and foundImages[2] or foundImages[1]
-    end
-
-    return imgId, cellColor, isCellGifted
-end
-
-local workspaceVisualCache = {}
-
-local function scanHiveVisuals()
-    local myHive = getMyHiveInstance()
-    if not myHive then return end
-
-    local cellsFolder = myHive:FindFirstChild("Cells") or myHive:FindFirstChild("Slots") or myHive
-    for _, cell in ipairs(cellsFolder:GetChildren()) do
-        local col, row = parseSlotPosition(cell.Name)
-        if col and row then
-            local key = string.format("%d_%d", col, row)
-            local img, colr, isGifted = extractCellVisual(cell)
-            if img or colr then
-                workspaceVisualCache[key] = {
-                    Image = img,
-                    Color = colr,
-                    IsGifted = isGifted
-                }
-            end
-        end
-    end
-end
-
--- ==================== DATA & BUFF MOON AMULET ====================
-local StatCache = require(ReplicatedStorage:WaitForChild("ClientStatCache", 5))
-local manualBonusPercent = nil
-
-local function detectMoonAmuletBonus(myData)
-    if not myData then return 0 end
-
-    if myData.BondFromTreats and tonumber(myData.BondFromTreats) then
-        return tonumber(myData.BondFromTreats)
-    end
-    if myData.Stats and type(myData.Stats) == "table" then
-        for k, v in pairs(myData.Stats) do
-            local lk = tostring(k):lower()
-            if lk:find("bond") and lk:find("treat") then
-                local n = tonumber(v)
-                if n and n > 0 then return n end
-            end
-        end
-    end
-
-    if myData.Amulets and type(myData.Amulets) == "table" then
-        local moon = myData.Amulets.Moon or myData.Amulets["Moon Amulet"]
-        if type(moon) == "table" then
-            for k, val in pairs(moon) do
-                local lk = tostring(k):lower()
-                if lk:find("bond") and tonumber(val) then
-                    return tonumber(val)
-                end
-                local sVal = tostring(val)
-                if sVal:lower():find("bond") then
-                    local num = tonumber(sVal:match("(%d+)%%?"))
-                    if num then return num end
-                end
-            end
-        end
-    end
-
-    return 0
-end
-
-local function getParsedHoneycomb()
+-- =================================================================
+-- 1. HÀM QUÉT SÂU BÙA MOON AMULET
+-- =================================================================
+local function getAtlasMoonTreatBonus()
     local s, myData = pcall(function() return StatCache:Get() end)
-    if not s or type(myData) ~= "table" then return {}, 0, 0 end
+    if not s or type(myData) ~= "table" then
+        return false, 0, "Không đọc được StatCache"
+    end
 
-    local treats = (myData.Eggs and tonumber(myData.Eggs.Treat)) or 0
-    local honeycomb = myData.Honeycomb or {}
-    local parsed = {}
+    local moonObj = nil
+    if myData.Amulets and myData.Amulets.Moon then
+        moonObj = myData.Amulets.Moon
+    elseif myData.AmuletData and myData.AmuletData.Moon then
+        moonObj = myData.AmuletData.Moon
+    elseif myData.EquippedAmulets and myData.EquippedAmulets.Moon then
+        moonObj = myData.EquippedAmulets.Moon
+    end
 
-    local autoBonus = detectMoonAmuletBonus(myData)
-    local finalBonus = manualBonusPercent or autoBonus
+    if not moonObj then 
+        return false, 0, "Chưa trang bị Moon Amulet"
+    end
 
-    for col = 1, 5 do
-        local colKey = "x" .. col
-        local colData = honeycomb[colKey] or honeycomb[col]
+    local treatPercent = 0
+    local foundStatName = ""
 
-        if type(colData) == "table" then
-            for row = 1, 10 do
-                local rowKey = "y" .. row
-                local bee = colData[rowKey] or colData[row]
-
-                if type(bee) == "table" and bee.Type then
-                    local idx = (row - 1) * 5 + col
-                    local totalLifetimeBond = tonumber(bee.Bond) or 0
-                    local currentLvl = tonumber(bee.Lvl or bee.Level) or 1
-                    local beeType = tostring(bee.Type or "Bee")
-
-                    local baseBondOfThisLvl = CumulativeBondToReachLvl[currentLvl] or 0
-                    local currentLvlBond = math.max(0, totalLifetimeBond - baseBondOfThisLvl)
-                    local bondRequiredForNextLvl = StepBondForLvl[currentLvl] or 15000
-
-                    local vKey = string.format("%d_%d", col, row)
-                    local visual = workspaceVisualCache[vKey]
-
-                    local isGifted = false
-                    if bee.Gifted == true or bee.gifted == true or bee.Gift == true then
-                        isGifted = true
-                    elseif bee.Variant and tostring(bee.Variant):lower():find("gifted") then
-                        isGifted = true
-                    elseif bee.Type and tostring(bee.Type):lower():find("gifted") then
-                        isGifted = true
-                    elseif visual and visual.IsGifted then
-                        isGifted = true
-                    end
-
-                    parsed[idx] = {
-                        Col = col,
-                        Row = row,
-                        Slot = idx,
-                        Type = beeType,
-                        Lvl = currentLvl,
-                        TotalBond = totalLifetimeBond,
-                        CurBond = currentLvlBond,
-                        MaxBond = bondRequiredForNextLvl,
-                        RawCellName = string.format("C%d,%d", col, row),
-                        FaceIcon = visual and visual.Image,
-                        CellColor = visual and visual.Color or Color3.fromRGB(35, 38, 48),
-                        IsGifted = isGifted
-                    }
+    local function parseItem(k, v)
+        local kStr = tostring(k):lower()
+        if (kStr:find("treat") or kStr:find("bondfromtreats")) and (type(v) == "number" or tonumber(v)) then
+            local num = tonumber(v) or 0
+            if num > 0 then
+                treatPercent = (num < 1) and (num * 100) or num
+                foundStatName = tostring(k)
+            end
+        elseif type(v) == "table" then
+            local statName = tostring(v[1] or v.Name or v.Stat or v.Type or v.Key or "")
+            local statVal = tonumber(v[2] or v.Value or v.Amount or v.Num) or 0
+            local nameLower = statName:lower()
+            if nameLower:find("treat") or nameLower:find("bond") then
+                if statVal > 0 then
+                    treatPercent = (statVal < 1) and (statVal * 100) or statVal
+                    foundStatName = statName
                 end
             end
         end
     end
 
-    return parsed, treats, finalBonus
+    if type(moonObj) == "table" then
+        for k, v in pairs(moonObj) do
+            parseItem(k, v)
+            if type(v) == "table" then
+                for subK, subV in pairs(v) do
+                    parseItem(subK, subV)
+                end
+            end
+        end
+    end
+
+    if treatPercent > 0 then
+        return true, treatPercent, "Tìm thấy: " .. foundStatName
+    end
+
+    return true, 0, "Moon Amulet không có dòng Bond From Treats"
 end
 
--- ==================== DI CHUYỂN & FEED ====================
-local cachedHiveCFrame = nil
-
-local function tweenTo(targetCFrame, speed)
-    speed = speed or 65
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart")
-    local distance = (hrp.Position - targetCFrame.Position).Magnitude
-    local duration = math.clamp(distance / speed, 0.5, 15)
-
-    local bodyV = Instance.new("BodyVelocity")
-    bodyV.Velocity = Vector3.zero
-    bodyV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    bodyV.Parent = hrp
-
-    local tween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), { CFrame = targetCFrame })
-    tween:Play()
-    tween.Completed:Wait()
-
-    bodyV:Destroy()
+-- Tính tổng Bond từ Lvl hiện tại -> Target Lvl
+local function getBondRequired(currentLvl, targetLvl)
+    if targetLvl <= currentLvl then return 0 end
+    local total = 0
+    for lvl = currentLvl + 1, targetLvl do
+        total = total + (BOND_REQUIREMENTS[lvl] or 0)
+    end
+    return total
 end
 
-local function sendFeed(col, row, cellName, amount)
-    pcall(function()
-        ReplicatedStorage.Events.ConstructHiveCellFromEgg:InvokeServer(col, row, "Treat", amount)
-    end)
-    pcall(function()
-        ReplicatedStorage.Events.PlayerActivesCommand:FireServer({
-            ["Name"] = "Feed",
-            ["Item"] = "Treat",
-            ["Cell"] = cellName,
-            ["Amount"] = amount
-        })
-    end)
-end
-
--- ==================== GIAO DIỆN NGANG (HORIZONTAL DASHBOARD) ====================
-if CoreGui:FindFirstChild("BSS_HorizontalSplitUI") then
-    CoreGui.BSS_HorizontalSplitUI:Destroy()
+-- =================================================================
+-- 2. TẠO GIAO DIỆN UI (ATLAS BEE & MOON MANAGER)
+-- =================================================================
+if CoreGui:FindFirstChild("AtlasBeeManagerUI") then
+    CoreGui.AtlasBeeManagerUI:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BSS_HorizontalSplitUI"
+ScreenGui.Name = "AtlasBeeManagerUI"
 ScreenGui.ResetOnSpawn = false
 pcall(function() ScreenGui.Parent = CoreGui end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
-local OpenBubble = Instance.new("TextButton")
-OpenBubble.Name = "OpenBubble"
-OpenBubble.Size = UDim2.new(0, 44, 0, 44)
-OpenBubble.Position = UDim2.new(0.02, 0, 0.35, 0)
-OpenBubble.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
-OpenBubble.Text = "🐝"
-OpenBubble.TextSize = 20
-OpenBubble.Visible = false
-OpenBubble.Active = true
-OpenBubble.Draggable = true
-OpenBubble.Parent = ScreenGui
-
-Instance.new("UICorner", OpenBubble).CornerRadius = UDim.new(1, 0)
-local BubbleStroke = Instance.new("UIStroke", OpenBubble)
-BubbleStroke.Thickness = 1.5
-BubbleStroke.Color = Color3.fromRGB(255, 205, 50)
-
+-- Main Frame
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 620, 0, 360)
-MainFrame.Position = UDim2.new(0.5, -310, 0.5, -180)
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-MainFrame.BorderSizePixel = 0
+MainFrame.Size = UDim2.new(0, 480, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -240, 0.5, -200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
 MainFrame.Active = true
 MainFrame.Draggable = true
-MainFrame.ClipsDescendants = false
 MainFrame.Parent = ScreenGui
-
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
-local MainStroke = Instance.new("UIStroke", MainFrame)
-MainStroke.Thickness = 1.5
-MainStroke.Color = Color3.fromRGB(255, 205, 50)
 
-local HeaderTitle = Instance.new("TextLabel")
-HeaderTitle.Size = UDim2.new(1, -70, 0, 24)
-HeaderTitle.Position = UDim2.new(0, 10, 0, 4)
-HeaderTitle.Text = "🐝 Honeycomb Dashboard (Ngang)"
-HeaderTitle.TextColor3 = Color3.fromRGB(255, 205, 50)
-HeaderTitle.Font = Enum.Font.SourceSansBold
-HeaderTitle.TextSize = 13
-HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-HeaderTitle.BackgroundTransparency = 1
-HeaderTitle.Parent = MainFrame
+local FrameStroke = Instance.new("UIStroke", MainFrame)
+FrameStroke.Color = Color3.fromRGB(255, 200, 80)
+FrameStroke.Thickness = 1.8
 
-local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 22, 0, 22)
-MinBtn.Position = UDim2.new(1, -50, 0, 5)
-MinBtn.Text = "_"
-MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-MinBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 65)
-MinBtn.Font = Enum.Font.SourceSansBold
-MinBtn.TextSize = 12
-MinBtn.Parent = MainFrame
-Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 4)
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -40, 0, 32)
+Title.Position = UDim2.new(0, 12, 0, 4)
+Title.Text = "🐝 ATLAS BEE MANAGER & MOON SCANNER"
+Title.TextColor3 = Color3.fromRGB(255, 215, 0)
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 15
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.BackgroundTransparency = 1
+Title.Parent = MainFrame
 
+-- Close Button
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 22, 0, 22)
-CloseBtn.Position = UDim2.new(1, -26, 0, 5)
-CloseBtn.Text = "X"
+CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position = UDim2.new(1, -30, 0, 6)
+CloseBtn.Text = "✕"
 CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(190, 45, 45)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
 CloseBtn.Font = Enum.Font.SourceSansBold
-CloseBtn.TextSize = 12
+CloseBtn.TextSize = 14
 CloseBtn.Parent = MainFrame
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 4)
-
-MinBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = false
-    OpenBubble.Visible = true
-end)
-
-OpenBubble.MouseButton1Click:Connect(function()
-    MainFrame.Visible = true
-    OpenBubble.Visible = false
-end)
-
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
 CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
--- TAY CẦM CO GIÃN 4 GÓC
-local activeResizeCorner = nil
-local rStartMousePos = Vector2.zero
-local rStartFramePos = Vector2.zero
-local rStartFrameSize = Vector2.zero
+-- Status Bar (Moon Info)
+local MoonStatusLabel = Instance.new("TextLabel")
+MoonStatusLabel.Size = UDim2.new(1, -24, 0, 28)
+MoonStatusLabel.Position = UDim2.new(0, 12, 0, 38)
+MoonStatusLabel.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+MoonStatusLabel.Text = "🌙 Đang quét dữ liệu Moon Amulet..."
+MoonStatusLabel.TextColor3 = Color3.fromRGB(120, 200, 255)
+MoonStatusLabel.Font = Enum.Font.SourceSansBold
+MoonStatusLabel.TextSize = 13
+MoonStatusLabel.Parent = MainFrame
+Instance.new("UICorner", MoonStatusLabel).CornerRadius = UDim.new(0, 6)
 
-local function createCornerGrip(name, pos, anchor, symbol)
-    local grip = Instance.new("TextButton")
-    grip.Name = name
-    grip.Size = UDim2.new(0, 16, 0, 16)
-    grip.Position = pos
-    grip.AnchorPoint = anchor
-    grip.BackgroundColor3 = Color3.fromRGB(38, 38, 46)
-    grip.Text = symbol
-    grip.TextColor3 = Color3.fromRGB(255, 205, 50)
-    grip.Font = Enum.Font.SourceSansBold
-    grip.TextSize = 10
-    grip.ZIndex = 25
-    grip.AutoButtonColor = false
-    grip.Parent = MainFrame
-    Instance.new("UICorner", grip).CornerRadius = UDim.new(0, 3)
-
-    grip.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            activeResizeCorner = name
-            rStartMousePos = Vector2.new(input.Position.X, input.Position.Y)
-            rStartFramePos = Vector2.new(MainFrame.AbsolutePosition.X, MainFrame.AbsolutePosition.Y)
-            rStartFrameSize = Vector2.new(MainFrame.AbsoluteSize.X, MainFrame.AbsoluteSize.Y)
-            MainFrame.Draggable = false
-        end
-    end)
-end
-
-createCornerGrip("Grip_TL", UDim2.new(0, 0, 0, 0), Vector2.new(0, 0), "◤")
-createCornerGrip("Grip_TR", UDim2.new(1, 0, 0, 0), Vector2.new(1, 0), "◥")
-createCornerGrip("Grip_BL", UDim2.new(0, 0, 1, 0), Vector2.new(0, 1), "◣")
-createCornerGrip("Grip_BR", UDim2.new(1, 0, 1, 0), Vector2.new(1, 1), "◢")
-
-UserInputService.InputChanged:Connect(function(input)
-    if activeResizeCorner and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local deltaX = input.Position.X - rStartMousePos.X
-        local deltaY = input.Position.Y - rStartMousePos.Y
-        local minW, maxW = 500, 1050
-        local minH, maxH = 280, 650
-
-        if activeResizeCorner == "Grip_BR" then
-            local newW = math.clamp(rStartFrameSize.X + deltaX, minW, maxW)
-            local newH = math.clamp(rStartFrameSize.Y + deltaY, minH, maxH)
-            MainFrame.Size = UDim2.new(0, newW, 0, newH)
-        elseif activeResizeCorner == "Grip_BL" then
-            local newW = math.clamp(rStartFrameSize.X - deltaX, minW, maxW)
-            local newH = math.clamp(rStartFrameSize.Y + deltaY, minH, maxH)
-            local newPosX = rStartFramePos.X + (rStartFrameSize.X - newW)
-            MainFrame.Size = UDim2.new(0, newW, 0, newH)
-            MainFrame.Position = UDim2.new(0, newPosX, 0, rStartFramePos.Y)
-        elseif activeResizeCorner == "Grip_TR" then
-            local newW = math.clamp(rStartFrameSize.X + deltaX, minW, maxW)
-            local newH = math.clamp(rStartFrameSize.Y - deltaY, minH, maxH)
-            local newPosY = rStartFramePos.Y + (rStartFrameSize.Y - newH)
-            MainFrame.Size = UDim2.new(0, newW, 0, newH)
-            MainFrame.Position = UDim2.new(0, rStartFramePos.X, 0, newPosY)
-        elseif activeResizeCorner == "Grip_TL" then
-            local newW = math.clamp(rStartFrameSize.X - deltaX, minW, maxW)
-            local newH = math.clamp(rStartFrameSize.Y - deltaY, minH, maxH)
-            local newPosX = rStartFramePos.X + (rStartFrameSize.X - newW)
-            local newPosY = rStartFramePos.Y + (rStartFrameSize.Y - newH)
-            MainFrame.Size = UDim2.new(0, newW, 0, newH)
-            MainFrame.Position = UDim2.new(0, newPosX, 0, newPosY)
-        end
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        activeResizeCorner = nil
-        MainFrame.Draggable = true
-    end
-end)
-
--- CỘT TRÁI: HIVE LƯỚI 5x10 (58%)
-local GridContainer = Instance.new("Frame")
-GridContainer.Name = "LeftHiveGrid"
-GridContainer.Size = UDim2.new(0.58, -10, 1, -38)
-GridContainer.Position = UDim2.new(0, 8, 0, 30)
-GridContainer.BackgroundColor3 = Color3.fromRGB(14, 14, 16)
-GridContainer.BorderSizePixel = 0
-GridContainer.Parent = MainFrame
-Instance.new("UICorner", GridContainer).CornerRadius = UDim.new(0, 8)
-
--- CỘT PHẢI: CHỨC NĂNG & THỐNG KÊ (42%)
-local ControlBox = Instance.new("Frame")
-ControlBox.Name = "RightFunctionsPanel"
-ControlBox.Size = UDim2.new(0.42, -12, 1, -38)
-ControlBox.Position = UDim2.new(0.58, 4, 0, 30)
-ControlBox.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-ControlBox.BorderSizePixel = 0
-ControlBox.Parent = MainFrame
-Instance.new("UICorner", ControlBox).CornerRadius = UDim.new(0, 8)
-
--- 1. Thẻ thông tin ô đang click
-local DetailCard = Instance.new("Frame")
-DetailCard.Size = UDim2.new(1, -12, 0, 46)
-DetailCard.Position = UDim2.new(0, 6, 0, 6)
-DetailCard.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
-DetailCard.BorderSizePixel = 0
-DetailCard.Parent = ControlBox
-Instance.new("UICorner", DetailCard).CornerRadius = UDim.new(0, 5)
-
-local DetailBeeTitle = Instance.new("TextLabel")
-DetailBeeTitle.Size = UDim2.new(1, -10, 0, 18)
-DetailBeeTitle.Position = UDim2.new(0, 6, 0, 2)
-DetailBeeTitle.Text = "🐝 Chạm 1 ô để xem thông số chi tiết"
-DetailBeeTitle.TextColor3 = Color3.fromRGB(255, 205, 50)
-DetailBeeTitle.Font = Enum.Font.SourceSansBold
-DetailBeeTitle.TextSize = 11
-DetailBeeTitle.TextXAlignment = Enum.TextXAlignment.Left
-DetailBeeTitle.BackgroundTransparency = 1
-DetailBeeTitle.Parent = DetailCard
-
-local DetailBondText = Instance.new("TextLabel")
-DetailBondText.Size = UDim2.new(1, -10, 0, 22)
-DetailBondText.Position = UDim2.new(0, 6, 0, 20)
-DetailBondText.Text = "Bond: -- / -- (Thiếu: -- Treats)"
-DetailBondText.TextColor3 = Color3.fromRGB(120, 220, 255)
-DetailBondText.Font = Enum.Font.SourceSansBold
-DetailBondText.TextSize = 10
-DetailBondText.TextWrapped = true
-DetailBondText.TextXAlignment = Enum.TextXAlignment.Left
-DetailBondText.BackgroundTransparency = 1
-DetailBondText.Parent = DetailCard
-
--- 2. Thẻ tính TỔNG BOND & TỔNG TREATS FULL TỔ CẦN ĐỂ ĐẠT MỤC TIÊU
-local TotalHiveCostCard = Instance.new("Frame")
-TotalHiveCostCard.Size = UDim2.new(1, -12, 0, 50)
-TotalHiveCostCard.Position = UDim2.new(0, 6, 0, 56)
-TotalHiveCostCard.BackgroundColor3 = Color3.fromRGB(30, 28, 20)
-TotalHiveCostCard.BorderSizePixel = 0
-TotalHiveCostCard.Parent = ControlBox
-Instance.new("UICorner", TotalHiveCostCard).CornerRadius = UDim.new(0, 5)
-
-local CostStroke = Instance.new("UIStroke", TotalHiveCostCard)
-CostStroke.Color = Color3.fromRGB(255, 205, 50)
-CostStroke.Thickness = 1
-
-local TotalHiveBondLabel = Instance.new("TextLabel")
-TotalHiveBondLabel.Size = UDim2.new(1, -8, 0, 22)
-TotalHiveBondLabel.Position = UDim2.new(0, 6, 0, 3)
-TotalHiveBondLabel.Text = "⚡ Tổng Bond thiếu: Đang tính..."
-TotalHiveBondLabel.TextColor3 = Color3.fromRGB(120, 225, 255)
-TotalHiveBondLabel.Font = Enum.Font.SourceSansBold
-TotalHiveBondLabel.TextSize = 10
-TotalHiveBondLabel.TextTruncate = Enum.TextTruncate.AtEnd
-TotalHiveBondLabel.TextXAlignment = Enum.TextXAlignment.Left
-TotalHiveBondLabel.BackgroundTransparency = 1
-TotalHiveBondLabel.Parent = TotalHiveCostCard
-
-local TotalHiveCostLabel = Instance.new("TextLabel")
-TotalHiveCostLabel.Size = UDim2.new(1, -8, 0, 22)
-TotalHiveCostLabel.Position = UDim2.new(0, 6, 0, 24)
-TotalHiveCostLabel.Text = "🍬 Cần: Đang tính..."
-TotalHiveCostLabel.TextColor3 = Color3.fromRGB(255, 220, 90)
-TotalHiveCostLabel.Font = Enum.Font.SourceSansBold
-TotalHiveCostLabel.TextSize = 10
-TotalHiveCostLabel.TextTruncate = Enum.TextTruncate.AtEnd
-TotalHiveCostLabel.TextXAlignment = Enum.TextXAlignment.Left
-TotalHiveCostLabel.BackgroundTransparency = 1
-TotalHiveCostLabel.Parent = TotalHiveCostCard
-
--- 3. Hàng thiết lập Target Level & Buff Moon Amulet
-local Row1 = Instance.new("Frame")
-Row1.Size = UDim2.new(1, -12, 0, 24)
-Row1.Position = UDim2.new(0, 6, 0, 110)
-Row1.BackgroundTransparency = 1
-Row1.Parent = ControlBox
-
-local TargetLbl = Instance.new("TextLabel")
-TargetLbl.Size = UDim2.new(0, 52, 1, 0)
-TargetLbl.Text = "Mục tiêu:"
-TargetLbl.TextColor3 = Color3.fromRGB(255, 205, 50)
-TargetLbl.Font = Enum.Font.SourceSansBold
-TargetLbl.TextSize = 11
-TargetLbl.TextXAlignment = Enum.TextXAlignment.Left
-TargetLbl.BackgroundTransparency = 1
-TargetLbl.Parent = Row1
+-- Target Level Controls
+local TargetLabel = Instance.new("TextLabel")
+TargetLabel.Size = UDim2.new(0, 120, 0, 28)
+TargetLabel.Position = UDim2.new(0, 12, 0, 72)
+TargetLabel.Text = "Mục tiêu Level:"
+TargetLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+TargetLabel.Font = Enum.Font.SourceSansBold
+TargetLabel.TextSize = 13
+TargetLabel.BackgroundTransparency = 1
+TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
+TargetLabel.Parent = MainFrame
 
 local TargetInput = Instance.new("TextBox")
-TargetInput.Size = UDim2.new(0, 38, 1, 0)
-TargetInput.Position = UDim2.new(0, 52, 0, 0)
-TargetInput.BackgroundColor3 = Color3.fromRGB(42, 42, 48)
+TargetInput.Size = UDim2.new(0, 60, 0, 28)
+TargetInput.Position = UDim2.new(0, 110, 0, 72)
+TargetInput.Text = "12"
 TargetInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+TargetInput.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
 TargetInput.Font = Enum.Font.SourceSansBold
-TargetInput.TextSize = 11
-TargetInput.Text = "8"
-TargetInput.ClearTextOnFocus = false
-TargetInput.Parent = Row1
-Instance.new("UICorner", TargetInput).CornerRadius = UDim.new(0, 4)
-
-local BuffLbl = Instance.new("TextLabel")
-BuffLbl.Size = UDim2.new(0, 42, 1, 0)
-BuffLbl.Position = UDim2.new(0, 96, 0, 0)
-BuffLbl.Text = "Moon:"
-BuffLbl.TextColor3 = Color3.fromRGB(120, 255, 140)
-BuffLbl.Font = Enum.Font.SourceSansBold
-BuffLbl.TextSize = 11
-BuffLbl.TextXAlignment = Enum.TextXAlignment.Left
-BuffLbl.BackgroundTransparency = 1
-BuffLbl.Parent = Row1
-
-local BuffInput = Instance.new("TextBox")
-BuffInput.Size = UDim2.new(1, -140, 1, 0)
-BuffInput.Position = UDim2.new(0, 140, 0, 0)
-BuffInput.BackgroundColor3 = Color3.fromRGB(35, 45, 38)
-BuffInput.TextColor3 = Color3.fromRGB(120, 255, 140)
-BuffInput.Font = Enum.Font.SourceSansBold
-BuffInput.TextSize = 11
-BuffInput.Text = "Auto"
-BuffInput.ClearTextOnFocus = false
-BuffInput.Parent = Row1
-Instance.new("UICorner", BuffInput).CornerRadius = UDim.new(0, 4)
-
-local liveParsedBees = {}
-
-local function updateTotalHiveCostDisplay(beesList)
-    local bees = beesList or liveParsedBees
-    if not bees or next(bees) == nil then return end
-
-    local targetLvl = tonumber(TargetInput.Text) or 8
-    local _, _, bonusPct = getParsedHoneycomb()
-    local currentBuff = manualBonusPercent or bonusPct
-    local bondPerTreat = 10 * (1 + (currentBuff / 100))
-
-    local targetCumulativeBond = CumulativeBondToReachLvl[targetLvl] or 0
-    local totalBondNeededForHive = 0
-    local totalTreatsNeededForHive = 0
-
-    for _, b in pairs(bees) do
-        if b and b.Lvl and b.Lvl < targetLvl then
-            local missingBondForThisBee = 0
-            if targetCumulativeBond > 0 and b.TotalBond then
-                missingBondForThisBee = math.max(0, targetCumulativeBond - b.TotalBond)
-            else
-                local cur = b.CurBond or 0
-                local step = b.MaxBond or 15000
-                missingBondForThisBee = math.max(0, step - cur)
-            end
-
-            local treatsForBee = math.ceil(missingBondForThisBee / bondPerTreat)
-            totalBondNeededForHive = totalBondNeededForHive + missingBondForThisBee
-            totalTreatsNeededForHive = totalTreatsNeededForHive + treatsForBee
-        end
-    end
-
-    local approxHoney = totalTreatsNeededForHive * 10000
-    TotalHiveBondLabel.Text = string.format("⚡ Tổng Bond thiếu (Lv.%d): %s", 
-        targetLvl, formatFullNumber(totalBondNeededForHive))
-    TotalHiveCostLabel.Text = string.format("🍬 Cần: %s Treats (~%s Honey)", 
-        formatFullNumber(totalTreatsNeededForHive), formatShortNumber(approxHoney))
-end
-
-TargetInput.FocusLost:Connect(function() updateTotalHiveCostDisplay() end)
-BuffInput.FocusLost:Connect(function()
-    local clean = BuffInput.Text:gsub("[^%d]", "")
-    local val = tonumber(clean)
-    if val then
-        manualBonusPercent = val
-        BuffInput.Text = "+" .. tostring(val) .. "%"
-        BuffInput.TextColor3 = Color3.fromRGB(255, 205, 50)
-    else
-        manualBonusPercent = nil
-        BuffInput.Text = "Auto"
-        BuffInput.TextColor3 = Color3.fromRGB(120, 255, 140)
-    end
-    updateTotalHiveCostDisplay()
-end)
-
--- 4. Hàng nút điều khiển
-local ActionRow = Instance.new("Frame")
-ActionRow.Size = UDim2.new(1, -12, 0, 28)
-ActionRow.Position = UDim2.new(0, 6, 0, 138)
-ActionRow.BackgroundTransparency = 1
-ActionRow.Parent = ControlBox
-
-local RunAutoBtn = Instance.new("TextButton")
-RunAutoBtn.Size = UDim2.new(0.68, 0, 1, 0)
-RunAutoBtn.Text = "🚀 Bay Về Tổ & Nạp"
-RunAutoBtn.BackgroundColor3 = Color3.fromRGB(40, 170, 70)
-RunAutoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-RunAutoBtn.Font = Enum.Font.SourceSansBold
-RunAutoBtn.TextSize = 11
-RunAutoBtn.Parent = ActionRow
-Instance.new("UICorner", RunAutoBtn).CornerRadius = UDim.new(0, 4)
-
-local StopAutoBtn = Instance.new("TextButton")
-StopAutoBtn.Size = UDim2.new(0.28, 0, 1, 0)
-StopAutoBtn.Position = UDim2.new(0.72, 0, 0, 0)
-StopAutoBtn.Text = "🛑 Dừng"
-StopAutoBtn.BackgroundColor3 = Color3.fromRGB(190, 45, 45)
-StopAutoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-StopAutoBtn.Font = Enum.Font.SourceSansBold
-StopAutoBtn.TextSize = 11
-StopAutoBtn.Parent = ActionRow
-Instance.new("UICorner", StopAutoBtn).CornerRadius = UDim.new(0, 4)
-
-local RefreshBtn = Instance.new("TextButton")
-RefreshBtn.Size = UDim2.new(1, -12, 0, 26)
-RefreshBtn.Position = UDim2.new(0, 6, 0, 170)
-RefreshBtn.Text = "📍 Đồng Bộ Tổ & Tải Lại"
-RefreshBtn.TextColor3 = Color3.fromRGB(20, 20, 20)
-RefreshBtn.BackgroundColor3 = Color3.fromRGB(255, 195, 20)
-RefreshBtn.Font = Enum.Font.SourceSansBold
-RefreshBtn.TextSize = 11
-RefreshBtn.Parent = ControlBox
-Instance.new("UICorner", RefreshBtn).CornerRadius = UDim.new(0, 4)
-
-local LiveStatusLabel = Instance.new("TextLabel")
-LiveStatusLabel.Size = UDim2.new(1, -12, 1, -202)
-LiveStatusLabel.Position = UDim2.new(0, 6, 0, 200)
-LiveStatusLabel.Text = "Trạng thái: Đã cập nhật tính toán chuẩn xác full tổ."
-LiveStatusLabel.TextColor3 = Color3.fromRGB(120, 255, 140)
-LiveStatusLabel.Font = Enum.Font.SourceSansSemibold
-LiveStatusLabel.TextSize = 10
-LiveStatusLabel.TextWrapped = true
-LiveStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-LiveStatusLabel.TextYAlignment = Enum.TextYAlignment.Top
-LiveStatusLabel.BackgroundTransparency = 1
-LiveStatusLabel.Parent = ControlBox
-
--- ==================== VẼ LƯỚI TỔ ONG BÊN TRÁI ====================
-local cellUIElements = {}
-local selectedSlotIdx = nil
-
-local function renderGrid()
-    GridContainer:ClearAllChildren()
-    cellUIElements = {}
-
-    scanHiveVisuals()
-
-    local bees, treats, bonusPct = getParsedHoneycomb()
-    liveParsedBees = bees
-
-    if not manualBonusPercent then
-        BuffInput.Text = "+" .. tostring(bonusPct) .. "%"
-    end
-
-    HeaderTitle.Text = string.format("🐝 Honeycomb Dashboard | 🍬 Treat: %s", formatFullNumber(treats))
-
-    local loadedCount = 0
-    local giftedCount = 0
-
-    for row = 10, 1, -1 do
-        local displayY = 10 - row
-        for col = 1, 5 do
-            local displayX = col - 1
-            local slotIdx = (row - 1) * 5 + col
-            local bee = bees[slotIdx]
-
-            local cellBox = Instance.new("TextButton")
-            cellBox.Text = ""
-            cellBox.Size = UDim2.new(0.188, 0, 0.088, 0)
-            cellBox.Position = UDim2.new(0.01 + displayX * 0.198, 0, 0.01 + displayY * 0.098, 0)
-            cellBox.BorderSizePixel = 0
-            cellBox.Parent = GridContainer
-            Instance.new("UICorner", cellBox).CornerRadius = UDim.new(0, 4)
-
-            local stroke = Instance.new("UIStroke", cellBox)
-            stroke.Thickness = 1.2
-            stroke.Color = Color3.fromRGB(45, 45, 55)
-
-            local bondBarBg = Instance.new("Frame")
-            bondBarBg.Size = UDim2.new(1, -4, 0, 3)
-            bondBarBg.Position = UDim2.new(0, 2, 1, -4)
-            bondBarBg.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-            bondBarBg.BorderSizePixel = 0
-            bondBarBg.Parent = cellBox
-            Instance.new("UICorner", bondBarBg).CornerRadius = UDim.new(1, 0)
-
-            local bondBarFill = Instance.new("Frame")
-            bondBarFill.Size = UDim2.new(0, 0, 1, 0)
-            bondBarFill.BackgroundColor3 = Color3.fromRGB(255, 205, 50)
-            bondBarFill.BorderSizePixel = 0
-            bondBarFill.Parent = bondBarBg
-            Instance.new("UICorner", bondBarFill).CornerRadius = UDim.new(1, 0)
-
-            local faceImage = Instance.new("ImageLabel")
-            faceImage.Size = UDim2.new(0, 16, 0, 16)
-            faceImage.Position = UDim2.new(0, 2, 0, 2)
-            faceImage.BackgroundTransparency = 1
-            faceImage.ScaleType = Enum.ScaleType.Fit
-            faceImage.Visible = false
-            faceImage.Parent = cellBox
-
-            local typeLabel = Instance.new("TextLabel")
-            typeLabel.Size = UDim2.new(0, 24, 0, 16)
-            typeLabel.Position = UDim2.new(0, 19, 0, 2)
-            typeLabel.Font = Enum.Font.SourceSansBold
-            typeLabel.TextSize = 8
-            typeLabel.TextTruncate = Enum.TextTruncate.AtEnd
-            typeLabel.TextXAlignment = Enum.TextXAlignment.Left
-            typeLabel.BackgroundTransparency = 1
-            typeLabel.Parent = cellBox
-
-            local lvlLabel = Instance.new("TextLabel")
-            lvlLabel.Size = UDim2.new(0, 12, 0, 16)
-            lvlLabel.Position = UDim2.new(1, -13, 0, 2)
-            lvlLabel.Font = Enum.Font.SourceSansBold
-            lvlLabel.TextSize = 9
-            lvlLabel.TextXAlignment = Enum.TextXAlignment.Right
-            lvlLabel.BackgroundTransparency = 1
-            lvlLabel.Parent = cellBox
-
-            if bee then
-                loadedCount = loadedCount + 1
-                cellBox.BackgroundColor3 = bee.CellColor:Lerp(Color3.fromRGB(20, 20, 24), 0.55)
-                lvlLabel.Text = tostring(bee.Lvl)
-                lvlLabel.TextColor3 = (bee.Lvl >= 15) and Color3.fromRGB(100, 255, 120) or Color3.fromRGB(255, 255, 255)
-
-                if bee.IsGifted then
-                    giftedCount = giftedCount + 1
-                    stroke.Color = Color3.fromRGB(255, 215, 0)
-                    stroke.Thickness = 1.6
-                    typeLabel.TextColor3 = Color3.fromRGB(255, 225, 75)
-                    typeLabel.Text = "★" .. tostring(bee.Type)
-                else
-                    stroke.Color = Color3.fromRGB(45, 45, 55)
-                    stroke.Thickness = 1.2
-                    typeLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
-                    typeLabel.Text = tostring(bee.Type)
-                end
-
-                if bee.FaceIcon and bee.FaceIcon ~= "" then
-                    faceImage.Image = bee.FaceIcon
-                    faceImage.Visible = true
-                    typeLabel.Position = UDim2.new(0, 19, 0, 2)
-                    typeLabel.Size = UDim2.new(0, 24, 0, 16)
-                else
-                    faceImage.Visible = false
-                    typeLabel.Position = UDim2.new(0, 3, 0, 2)
-                    typeLabel.Size = UDim2.new(0, 38, 0, 16)
-                end
-
-                local pct = math.clamp(bee.CurBond / bee.MaxBond, 0, 1)
-                bondBarFill.Size = UDim2.new(pct, 0, 1, 0)
-                bondBarFill.BackgroundColor3 = (pct >= 0.8) and Color3.fromRGB(100, 255, 120) or Color3.fromRGB(255, 205, 50)
-            else
-                cellBox.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-                typeLabel.Text = ""
-                lvlLabel.Text = ""
-                faceImage.Visible = false
-            end
-
-            cellBox.MouseButton1Click:Connect(function()
-                selectedSlotIdx = slotIdx
-                local b = liveParsedBees[slotIdx]
-                if b then
-                    local currentBuff = manualBonusPercent or bonusPct
-                    local bondPerTreat = 10 * (1 + (currentBuff / 100))
-                    local missingBond = math.max(0, b.MaxBond - b.CurBond)
-                    local missingTreats = math.ceil(missingBond / bondPerTreat)
-                    local nextLvl = b.Lvl + 1
-                    local tag = b.IsGifted and " [★ Gifted]" or ""
-
-                    DetailBeeTitle.Text = string.format("🐝 C%d,%d: %s%s (Lv.%d ➔ %d)", b.Col, b.Row, tostring(b.Type), tag, b.Lvl, nextLvl)
-                    DetailBondText.Text = string.format("Bond: %s / %s\nThiếu: %s Treats [Moon: +%d%%]", 
-                        formatFullNumber(b.CurBond), formatFullNumber(b.MaxBond), formatFullNumber(missingTreats), currentBuff)
-                else
-                    DetailBeeTitle.Text = string.format("🐝 Ô %d: (Ô Trống)", slotIdx)
-                    DetailBondText.Text = "Chưa có thông tin con ong."
-                end
-            end)
-
-            cellUIElements[slotIdx] = {
-                Box = cellBox,
-                Stroke = stroke,
-                TypeLabel = typeLabel,
-                LevelLabel = lvlLabel,
-                BarFill = bondBarFill,
-                FaceImage = faceImage
-            }
-        end
-    end
-
-    updateTotalHiveCostDisplay(bees)
-    LiveStatusLabel.Text = string.format("✅ Tải %d con ong (%d Gifted Bee ★)! Moon: +%d%%.", loadedCount, giftedCount, bonusPct)
-    LiveStatusLabel.TextColor3 = Color3.fromRGB(120, 255, 140)
-end
-
--- Vòng lặp cập nhật Real-time
-task.spawn(function()
-    while ScreenGui.Parent do
-        local bees, treats, bonusPct = getParsedHoneycomb()
-        liveParsedBees = bees
-        HeaderTitle.Text = string.format("🐝 Honeycomb Dashboard | 🍬 Treat: %s", formatFullNumber(treats))
-
-        if not manualBonusPercent then
-            BuffInput.Text = "+" .. tostring(bonusPct) .. "%"
-        end
-
-        for slotIdx, ui in pairs(cellUIElements) do
-            local b = bees[slotIdx]
-            if b then
-                ui.LevelLabel.Text = tostring(b.Lvl)
-                if b.IsGifted then
-                    ui.Stroke.Color = Color3.fromRGB(255, 215, 0)
-                    ui.TypeLabel.TextColor3 = Color3.fromRGB(255, 225, 75)
-                    ui.TypeLabel.Text = "★" .. tostring(b.Type)
-                else
-                    ui.TypeLabel.Text = tostring(b.Type)
-                end
-
-                if b.FaceIcon and b.FaceIcon ~= "" and (not ui.FaceImage.Visible or ui.FaceImage.Image ~= b.FaceIcon) then
-                    ui.FaceImage.Image = b.FaceIcon
-                    ui.FaceImage.Visible = true
-                    ui.TypeLabel.Position = UDim2.new(0, 19, 0, 2)
-                    ui.TypeLabel.Size = UDim2.new(0, 24, 0, 16)
-                end
-                local pct = math.clamp(b.CurBond / b.MaxBond, 0, 1)
-                ui.BarFill.Size = UDim2.new(pct, 0, 1, 0)
-                ui.BarFill.BackgroundColor3 = (pct >= 0.8) and Color3.fromRGB(100, 255, 120) or Color3.fromRGB(255, 205, 50)
-            end
-        end
-
-        if selectedSlotIdx and liveParsedBees[selectedSlotIdx] then
-            local b = liveParsedBees[selectedSlotIdx]
-            local currentBuff = manualBonusPercent or bonusPct
-            local bondPerTreat = 10 * (1 + (currentBuff / 100))
-            local missingBond = math.max(0, b.MaxBond - b.CurBond)
-            local missingTreats = math.ceil(missingBond / bondPerTreat)
-            local nextLvl = b.Lvl + 1
-            local tag = b.IsGifted and " [★ Gifted]" or ""
-
-            DetailBeeTitle.Text = string.format("🐝 C%d,%d: %s%s (Lv.%d ➔ %d)", b.Col, b.Row, tostring(b.Type), tag, b.Lvl, nextLvl)
-            DetailBondText.Text = string.format("Bond: %s / %s\nThiếu: %s Treats [Moon: +%d%%]", 
-                formatFullNumber(b.CurBond), formatFullNumber(b.MaxBond), formatFullNumber(missingTreats), currentBuff)
-        end
-
-        updateTotalHiveCostDisplay(bees)
-        task.wait(1)
-    end
-end)
-
-local function onRefresh()
-    local char = LocalPlayer.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        cachedHiveCFrame = char.HumanoidRootPart.CFrame
-    end
-    renderGrid()
-end
-
-RefreshBtn.MouseButton1Click:Connect(onRefresh)
-renderGrid()
-
--- ==================== CHU TRÌNH NÂNG CẤP TỰ ĐỘNG ====================
-local isRunning = false
-local farmPos = nil
-
-RunAutoBtn.MouseButton1Click:Connect(function()
-    if isRunning then return end
-
-    local targetLvl = tonumber(TargetInput.Text)
-
-    if not targetLvl or targetLvl < 2 or targetLvl > 25 then
-        LiveStatusLabel.Text = "⚠️ Cấp mục tiêu không hợp lệ!"
-        LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-
-    if not cachedHiveCFrame then
-        local myHive = getMyHiveInstance()
-        if myHive then
-            local base = myHive:FindFirstChild("Platform") or myHive:FindFirstChildWhichIsA("BasePart")
-            if base then cachedHiveCFrame = base.CFrame * CFrame.new(0, 4, 10) end
-        end
-    end
-
-    if not cachedHiveCFrame then
-        LiveStatusLabel.Text = "❌ Chưa lưu vị trí tổ! Đứng trước tổ bấm nút vàng 1 lần."
-        LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-        return
-    end
-
-    local _, treatsNow = getParsedHoneycomb()
-    if treatsNow <= 0 then
-        LiveStatusLabel.Text = "🛑 CHẶN BAY: Hết sạch Treats trong túi! Ở lại bãi farm."
-        LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        return
-    end
-
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart")
-    farmPos = hrp.CFrame
-
-    isRunning = true
-    RunAutoBtn.Text = "⚡ Đang chạy..."
-    RunAutoBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 20)
-
-    task.spawn(function()
-        LiveStatusLabel.Text = "🚀 Đang bay về tổ..."
-        LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 205, 50)
-        tweenTo(cachedHiveCFrame, 65)
-        task.wait(0.5)
-
-        local upgradedCount = 0
-        local treatDepleted = false
-
-        for slotIdx = 1, 50 do
-            if not isRunning or treatDepleted then break end
-
-            local bee = liveParsedBees[slotIdx]
-            if bee and bee.Lvl and bee.Lvl < targetLvl then
-                local ui = cellUIElements[slotIdx]
-                if ui then ui.Stroke.Color = Color3.fromRGB(255, 205, 50) end
-
-                while isRunning and bee.Lvl < targetLvl do
-                    local _, curTreats, bonusPct = getParsedHoneycomb()
-                    if curTreats <= 0 then
-                        treatDepleted = true
-                        LiveStatusLabel.Text = "⚠️ Hết sạch Treats! Đang tự bay về bãi farm..."
-                        LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 160, 50)
-                        break
-                    end
-
-                    local currentBuff = manualBonusPercent or bonusPct
-                    local bondPerTreat = 10 * (1 + (currentBuff / 100))
-
-                    local targetCumulativeBond = CumulativeBondToReachLvl[targetLvl] or (CumulativeBondToReachLvl[#CumulativeBondToReachLvl])
-                    local totalBondNeeded = math.max(0, targetCumulativeBond - bee.TotalBond)
-                    local exactTreatsNeeded = math.ceil(totalBondNeeded / bondPerTreat)
-
-                    local feedAmount = math.min(curTreats, exactTreatsNeeded)
-
-                    LiveStatusLabel.Text = string.format("🐝 Nạp C%d,%d (%s Lv.%d ➔ %d): Nạp %s Treats...", 
-                        bee.Col, bee.Row, tostring(bee.Type), bee.Lvl, targetLvl, formatFullNumber(feedAmount))
-                    LiveStatusLabel.TextColor3 = Color3.fromRGB(120, 255, 140)
-
-                    sendFeed(bee.Col, bee.Row, bee.RawCellName, feedAmount)
-                    task.wait(0.6)
-
-                    local freshBees, _ = getParsedHoneycomb()
-                    local newBee = freshBees[slotIdx]
-                    if newBee then
-                        bee = newBee
-                        liveParsedBees[slotIdx] = newBee
-                        if ui then
-                            ui.LevelLabel.Text = tostring(newBee.Lvl)
-                            ui.LevelLabel.TextColor3 = Color3.fromRGB(100, 255, 120)
-                        end
-                        if bee.Lvl >= targetLvl then
-                            upgradedCount = upgradedCount + 1
-                            break
-                        end
-                    end
-
-                    if feedAmount >= curTreats then
-                        treatDepleted = true
-                        LiveStatusLabel.Text = "⚠️ Đã dùng hết Treat trong túi! Đang quay lại bãi farm..."
-                        LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 160, 50)
-                        break
-                    end
-                end
-
-                if ui then 
-                    ui.Stroke.Color = bee.IsGifted and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(45, 45, 55)
-                end
-            end
-        end
-
-        if farmPos then
-            if treatDepleted then
-                LiveStatusLabel.Text = "✈️ Hết Treats, đang quay lại bãi farm..."
-            else
-                LiveStatusLabel.Text = "✈️ Hoàn tất! Đang bay về lại bãi farm..."
-            end
-            LiveStatusLabel.TextColor3 = Color3.fromRGB(100, 220, 255)
-            tweenTo(farmPos, 65)
-        end
-
-        if treatDepleted then
-            LiveStatusLabel.Text = string.format("🛑 Đã dừng do hết Treat (Đã nâng %d con lên Lv.%d)", upgradedCount, targetLvl)
-            LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 180, 80)
+TargetInput.TextSize = 14
+TargetInput.Parent = MainFrame
+Instance.new("UICorner", TargetInput).CornerRadius = UDim.new(0, 6)
+
+-- Nút Scan Hive
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(0, 130, 0, 28)
+ScanBtn.Position = UDim2.new(0, 180, 0, 72)
+ScanBtn.Text = "🔄 Quét Tổ Ong"
+ScanBtn.TextColor3 = Color3.fromRGB(20, 20, 20)
+ScanBtn.BackgroundColor3 = Color3.fromRGB(255, 200, 80)
+ScanBtn.Font = Enum.Font.SourceSansBold
+ScanBtn.TextSize = 13
+ScanBtn.Parent = MainFrame
+Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 6)
+
+-- Container Danh sách Ong (ScrollingFrame)
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1, -24, 0, 240)
+ScrollFrame.Position = UDim2.new(0, 12, 0, 110)
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.Parent = MainFrame
+Instance.new("UICorner", ScrollFrame).CornerRadius = UDim.new(0, 6)
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = ScrollFrame
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 4)
+
+-- Log Status Label
+local LogLabel = Instance.new("TextLabel")
+LogLabel.Size = UDim2.new(1, -24, 0, 32)
+LogLabel.Position = UDim2.new(0, 12, 0, 358)
+LogLabel.Text = "Sẵn sàng."
+LogLabel.TextColor3 = Color3.fromRGB(150, 220, 150)
+LogLabel.Font = Enum.Font.SourceSans
+LogLabel.TextSize = 12
+LogLabel.BackgroundTransparency = 1
+LogLabel.TextXAlignment = Enum.TextXAlignment.Left
+LogLabel.Parent = MainFrame
+
+-- =================================================================
+-- 3. XỬ LÝ LOGIC CHÍNH (QUÉT HIVE & CHO ĂN AUTO)
+-- =================================================================
+local currentMoonBonusPercent = 0
+
+local function refreshMoonBonus()
+    local success, percent, status = getAtlasMoonTreatBonus()
+    if success then
+        currentMoonBonusPercent = percent
+        if percent > 0 then
+            MoonStatusLabel.Text = string.format("🌙 Moon Bonus: +%.0f%% Bond From Treats (1 Treat = %.1f Bond)", percent, 10 * (1 + percent/100))
+            MoonStatusLabel.TextColor3 = Color3.fromRGB(100, 255, 150)
         else
-            LiveStatusLabel.Text = string.format("✅ Xong! Đã nâng %d con lên thẳng Lv.%d.", upgradedCount, targetLvl)
-            LiveStatusLabel.TextColor3 = Color3.fromRGB(120, 255, 140)
+            MoonStatusLabel.Text = "🌙 Moon Bonus: 0% (1 Treat = 10 Bond)"
+            MoonStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
         end
+    else
+        MoonStatusLabel.Text = "❌ Lỗi: " .. status
+        MoonStatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    end
+end
 
-        isRunning = false
-        RunAutoBtn.Text = "🚀 Bay Về Tổ & Nạp"
-        RunAutoBtn.BackgroundColor3 = Color3.fromRGB(40, 170, 70)
-    end)
-end)
+local function scanHiveAndRender()
+    refreshMoonBonus()
 
-StopAutoBtn.MouseButton1Click:Connect(function()
-    if not isRunning then return end
-    isRunning = false
-    LiveStatusLabel.Text = "🛑 Đang dừng! Bay lại bãi farm..."
-    LiveStatusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-    task.spawn(function()
-        if farmPos then tweenTo(farmPos, 65) end
-        LiveStatusLabel.Text = "Đã dừng tại bãi farm."
-        RunAutoBtn.Text = "🚀 Bay Về Tổ & Nạp"
-        RunAutoBtn.BackgroundColor3 = Color3.fromRGB(40, 170, 70)
-    end)
-end)
+    -- Xóa các item cũ
+    for _, child in pairs(ScrollFrame:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+
+    local s, myData = pcall(function() return StatCache:Get() end)
+    if not s or type(myData) ~= "table" or not myData.Bees then
+        LogLabel.Text = "❌ Không tìm thấy dữ liệu Bees trong StatCache!"
+        return
+    end
+
+    local targetLvl = tonumber(TargetInput.Text) or 12
+    local bondPerTreat = 10 * (1 + (currentMoonBonusPercent / 100))
+    local totalTreatsInInventory = myData.Treats or 0
+
+    local beeCount = 0
+
+    for slotIndex, beeData in pairs(myData.Bees) do
+        beeCount = beeCount + 1
+        local beeName = beeData.Type or "Bee"
+        local currentLvl = beeData.Level or 1
+        local currentBond = beeData.Bond or 0
+
+        -- Tính toán lượng Treat cần dùng
+        local totalBondNeeded = getBondRequired(currentLvl, targetLvl)
+        local remainingBondNeeded = math.max(0, totalBondNeeded - currentBond)
+        local treatsNeeded = math.ceil(remainingBondNeeded / bondPerTreat)
+
+        -- Item Frame cho từng con ong
+        local BeeItem = Instance.new("Frame")
+        BeeItem.Size = UDim2.new(1, -10, 0, 36)
+        BeeItem.BackgroundColor3 = Color3.fromRGB(32, 32, 44)
+        BeeItem.Parent = ScrollFrame
+        Instance.new("UICorner", BeeItem).CornerRadius = UDim.new(0, 4)
+
+        local BeeInfo = Instance.new("TextLabel")
+        BeeInfo.Size = UDim2.new(0.65, 0, 1, 0)
+        BeeInfo.Position = UDim2.new(0, 8, 0, 0)
+        BeeInfo.Text = string.format("[%d] %s (Lv.%d) ➜ Lv.%d\nCần: %s Treats", slotIndex, beeName, currentLvl, targetLvl, tostring(treatsNeeded))
+        BeeInfo.TextColor3 = Color3.fromRGB(240, 240, 240)
+        BeeInfo.Font = Enum.Font.SourceSans
+        BeeInfo.TextSize = 12
+        BeeInfo.TextXAlignment = Enum.TextXAlignment.Left
+        BeeInfo.BackgroundTransparency = 1
+        BeeInfo.Parent = BeeItem
+
+        local FeedBtn = Instance.new("TextButton")
+        FeedBtn.Size = UDim2.new(0.3, -8, 0, 26)
+        FeedBtn.Position = UDim2.new(0.7, 0, 0, 5)
+        FeedBtn.Text = (currentLvl >= targetLvl) and "Đạt Max" or "Cho Ăn"
+        FeedBtn.BackgroundColor3 = (currentLvl >= targetLvl) and Color3.fromRGB(60, 60, 75) or Color3.fromRGB(50, 180, 100)
+        FeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        FeedBtn.Font = Enum.Font.SourceSansBold
+        FeedBtn.TextSize = 12
+        FeedBtn.Parent = BeeItem
+        Instance.new("UICorner", FeedBtn).CornerRadius = UDim.new(0, 4)
+
+        -- Sự kiện Nút Cho Ăn Tự Động
+        FeedBtn.MouseButton1Click:Connect(function()
+            if currentLvl >= targetLvl then
+                LogLabel.Text = "⚠️ Ong đã đạt hoặc vượt Level mục tiêu!"
+                return
+            end
+
+            if treatsNeeded <= 0 then
+                LogLabel.Text = "⚠️ Ong không cần thêm Treat!"
+                return
+            end
+
+            LogLabel.Text = string.format("⌛ Đang cho [%s] ăn %d Treats...", beeName, treatsNeeded)
+            FeedBtn.Text = "Đang xử lý..."
+            FeedBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 50)
+
+            -- Gửi Remote Event tới Server để nâng cấp Ong
+            task.spawn(function()
+                ConstructHiveEvent:FireServer("Feed", treatsNeeded, "Treat", slotIndex)
+                task.wait(1)
+                scanHiveAndRender()
+                LogLabel.Text = string.format("✅ Đã gửi Remote nâng Level thành công cho [%s]!", beeName)
+            end)
+        end)
+    end
+
+    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, beeCount * 40)
+    LogLabel.Text = string.format(" Quét thành công %d chú ong. Treat hiện có: %d", beeCount, totalTreatsInInventory)
+end
+
+-- Lắng nghe sự kiện Nút Bấm
+ScanBtn.MouseButton1Click:Connect(scanHiveAndRender)
+
+-- Khởi chạy lần đầu
+scanHiveAndRender()
