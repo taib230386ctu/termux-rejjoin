@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lưu dữ liệu trực tiếp lên GitHub</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f4f4f9; }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 200px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        button { background-color: #28a745; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+        button:hover { background-color: #218838; }
+        #status { margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Dán dữ liệu của bạn vào đây</h2>
+        <textarea id="dataInput" placeholder="Dán nội dung..."></textarea><br>
+        <button onclick="saveToGitHub()">Lưu lên GitHub</button>
+        <p id="status"></p>
+    </div>
+
+    <script>
+        const CONFIG = {
+            // Tự động lấy chuẩn xác username của bạn
+            username: window.location.hostname.split('.')[0],
+            
+            // Tự động nhận diện tên repository từ đường dẫn web
+            repo: window.location.pathname.split('/').filter(Boolean)[0],
+            
+            // Token của bạn đã được gắn vào đây:
+            token: "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" 
+        };
+
+        async function saveToGitHub() {
+            const content = document.getElementById('dataInput').value;
+            const statusEl = document.getElementById('status');
+            
+            if (!content.trim()) {
+                alert("Vui lòng nhập nội dung!");
+                return;
+            }
+
+            statusEl.innerText = "Đang lưu...";
+            statusEl.style.color = "blue";
+
+            const filename = `data_${Date.now()}.txt`;
+            const url = `https://api.github.com/repos/${CONFIG.username}/${CONFIG.repo}/contents/${filename}`;
+            const base64Content = btoa(unescape(encodeURIComponent(content)));
+
+            try {
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${CONFIG.token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: `Them du lieu moi: ${filename}`,
+                        content: base64Content
+                    })
+                });
+
+                if (response.ok) {
+                    statusEl.innerText = "Lưu thành công! Dữ liệu đã về GitHub.";
+                    statusEl.style.color = "green";
+                    document.getElementById('dataInput').value = "";
+                } else {
+                    const err = await response.json();
+                    statusEl.innerText = "Lỗi: " + err.message;
+                    statusEl.style.color = "red";
+                }
+            } catch (error) {
+                statusEl.innerText = "Có lỗi kết nối xảy ra!";
+                statusEl.style.color = "red";
+            }
+        }
+    </script>
+</body>
+</html>
