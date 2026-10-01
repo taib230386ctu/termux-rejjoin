@@ -3,37 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lưu dữ liệu trực tiếp lên GitHub</title>
+    <title>Trang Nhận Dữ Liệu An Toàn</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f4f4f9; }
-        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-        textarea { width: 100%; height: 200px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-        button { background-color: #28a745; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
-        button:hover { background-color: #218838; }
-        #status { margin-top: 15px; font-weight: bold; }
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 600px; 
+            margin: 50px auto; 
+            padding: 20px; 
+            background-color: #f4f4f9; 
+        }
+        .container { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+        }
+        textarea { 
+            width: 100%; 
+            height: 200px; 
+            padding: 10px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            font-size: 14px; 
+            resize: vertical;
+        }
+        button { 
+            background-color: #28a745; 
+            color: white; 
+            padding: 12px 20px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+        }
+        button:hover { 
+            background-color: #218838; 
+        }
+        #status { 
+            margin-top: 15px; 
+            font-weight: bold; 
+        }
     </style>
 </head>
 <body>
 
     <div class="container">
         <h2>Dán dữ liệu của bạn vào đây</h2>
-        <textarea id="dataInput" placeholder="Dán nội dung..."></textarea><br>
+        <textarea id="dataInput" placeholder="Dán nội dung vào đây..."></textarea><br>
         <button onclick="saveToGitHub()">Lưu lên GitHub</button>
         <p id="status"></p>
     </div>
 
     <script>
-        const CONFIG = {
-            // Tự động lấy chuẩn xác username của bạn
-            username: window.location.hostname.split('.')[0],
-            
-            // Tự động nhận diện tên repository từ đường dẫn web
-            repo: window.location.pathname.split('/').filter(Boolean)[0],
-            
-            // Token mới đã được cập nhật vào đây:
-            token: "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" 
-        };
-
         async function saveToGitHub() {
             const content = document.getElementById('dataInput').value;
             const statusEl = document.getElementById('status');
@@ -43,18 +65,30 @@
                 return;
             }
 
+            // Lấy token từ bộ nhớ trình duyệt, nếu chưa có sẽ bật bảng hỏi để bạn nhập
+            let token = localStorage.getItem("github_token");
+            if (!token) {
+                token = prompt("Nhập GitHub Token của bạn (chỉ cần nhập 1 lần duy nhất cho máy này):");
+                if (!token) return;
+                token = token.trim();
+                localStorage.setItem("github_token", token);
+            }
+
             statusEl.innerText = "Đang lưu...";
             statusEl.style.color = "blue";
 
+            // Tự động nhận diện tài khoản và tên repository từ link web của bạn
+            const username = window.location.hostname.split('.')[0];
+            const repo = window.location.pathname.split('/').filter(Boolean)[0];
             const filename = `data_${Date.now()}.txt`;
-            const url = `https://api.github.com/repos/${CONFIG.username}/${CONFIG.repo}/contents/${filename}`;
+            const url = `https://api.github.com/repos/${username}/${repo}/contents/${filename}`;
             const base64Content = btoa(unescape(encodeURIComponent(content)));
 
             try {
                 const response = await fetch(url, {
                     method: 'PUT',
                     headers: {
-                        'Authorization': `token ${CONFIG.token}`,
+                        'Authorization': `token ${token}`,
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
@@ -66,11 +100,17 @@
                 if (response.ok) {
                     statusEl.innerText = "Lưu thành công! Dữ liệu đã về GitHub.";
                     statusEl.style.color = "green";
-                    document.getElementById('dataInput').value = "";
+                    document.getElementById('dataInput').value = ""; // Xóa sạch ô nhập sau khi gửi xong
                 } else {
                     const err = await response.json();
                     statusEl.innerText = "Lỗi: " + err.message;
                     statusEl.style.color = "red";
+                    
+                    // Nếu token bị lỗi/hết hạn, tự động xóa đi để lần sau nhập lại cái mới
+                    if (response.status === 401 || response.status === 403) {
+                        localStorage.removeItem("github_token");
+                        alert("Token không hợp lệ hoặc đã bị khóa. Vui lòng bấm lưu lại để nhập token mới!");
+                    }
                 }
             } catch (error) {
                 statusEl.innerText = "Có lỗi kết nối xảy ra!";
